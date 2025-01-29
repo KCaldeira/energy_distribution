@@ -11,6 +11,7 @@ from scipy.interpolate import interp1d
 import math
 import statsmodels.api as sm
 import time
+import platform, os
 
 #%% main processing code
 
@@ -122,7 +123,7 @@ def prep_country_level_data(input_data, int_epsilon, verbose_level):
     # Step 6: Compute energy Gini list
     energy_gini_list = [
         1 - integral_energy_lorenz(rmspq[1], rmspq[2], gamma, 1, 1) /
-            (energy_lorenz_bin(int_epsilon, 1.-int_epsilon, rmspq[1], rmspq[2], gamma, 1, 1) / 2)
+            (energy_lorenz_bin(0., 1.-int_epsilon, rmspq[1], rmspq[2], gamma, 1, 1) / 2)
         for rmspq in rmspq_list
     ]
 
@@ -703,8 +704,8 @@ def export_groups_percentile(groups, group_names, group_type, input_data,
                    [[group_names[idx]] + group_ce[idx] for idx in range(len(groups))]
 
     # Step 5: Export to Excel
-    out_pc_file = f"{filename_prefix}_popPct_pop_{group_type}.xlsx"
-    out_ce_file = f"{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
+    out_pc_file = f"./{filename_prefix}/{filename_prefix}_popPct_pop_{group_type}.xlsx"
+    out_ce_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
 
     
     pd.DataFrame(out_group_pc).to_excel(out_pc_file, index=False, header=False)
@@ -772,8 +773,8 @@ def export_groups_pc_energy(groups, group_names, group_type, energy_level_list, 
                    [[group_names[idx]] + list(group_energy[idx]) for idx in range(len(groups))]
 
     # Step 3: Export the first two tables to Excel
-    out_pc_file = f"{filename_prefix}_group_energyLevel_pop_{group_type}.xlsx"
-    out_ce_file = f"{filename_prefix}_group_energyLevel_cumEnergy_{group_type}.xlsx"
+    out_pc_file = f"./{filename_prefix}/{filename_prefix}_group_energyLevel_pop_{group_type}.xlsx"
+    out_ce_file = f"./{filename_prefix}/{filename_prefix}_group_energyLevel_cumEnergy_{group_type}.xlsx"
     
     pd.DataFrame(out_group_pc).to_excel(out_pc_file, index=False, header=False)
     if verbose_level > 0:
@@ -797,8 +798,8 @@ def export_groups_pc_energy(groups, group_names, group_type, energy_level_list, 
                            [[group_names[idx]] + list(group_energy_bin[idx]) for idx in range(len(groups))]
 
     # Step 5: Export the bin data to Excel
-    out_pop_bin_file = f"{filename_prefix}_group_energyLevel_pop.xlsx"
-    out_energy_bin_file = f"{filename_prefix}_group_energyLevel_energy.xlsx"
+    out_pop_bin_file = f"./{filename_prefix}/{filename_prefix}_group_energyLevel_pop.xlsx"
+    out_energy_bin_file = f"./{filename_prefix}/{filename_prefix}_group_energyLevel_energy.xlsx"
  
     
     pd.DataFrame(out_group_pop_bin).to_excel(out_pop_bin_file, index=False, header=False)
@@ -846,8 +847,8 @@ def export_countries_percentile(input_data, percentile_list,
               for idx in range(len(cum_energy_bdry_country))]
 
     # Step 3: Export to Excel
-    out_pc_file = f"{filename_prefix}_country_popPct_percapEnergy.xlsx"
-    out_ce_file = f"{filename_prefix}_country_popPct_cumEnergy.xlsx"
+    out_pc_file = f"./{filename_prefix}/{filename_prefix}_country_popPct_percapEnergy.xlsx"
+    out_ce_file = f"./{filename_prefix}/{filename_prefix}_country_popPct_cumEnergy.xlsx"
     
     pd.DataFrame(out_pc).to_excel(out_pc_file, index=False, header=False)
     if verbose_level > 0:
@@ -902,7 +903,7 @@ def export_country_list(country_list, filename_prefix, verbose_level):
     df.columns = headings
 
     # Step 3: Export to Excel
-    file_name = f"{filename_prefix}_country_data_various.xlsx"
+    file_name = f"./{filename_prefix}/{filename_prefix}_country_data_various.xlsx"
     df.to_excel(file_name,index=False)
 
     # Step 4: Print confirmation if verbose
@@ -1029,7 +1030,7 @@ def export_combined_energy_data(combined_data, filename_prefix):
 
 
     # Create the output file name
-    file_name = f"{filename_prefix}_global_data_various_b{len(combined_data[list(combined_data.keys())[0]])}.xlsx"
+    file_name = f"./{filename_prefix}/{filename_prefix}_global_data_various_b{len(combined_data[list(combined_data.keys())[0]])}.xlsx"
 
     # Create a pandas DataFrame
     df = pd.DataFrame(combined_data)
@@ -1131,7 +1132,7 @@ def export_redist_energy_data(redist, filename_prefix):
     ]
 
     # Create the output file name
-    file_name = f"{filename_prefix}_global_redist_various_b{len(redist)}.xlsx"
+    file_name = f"./{filename_prefix}/{filename_prefix}_global_redist_various_b{len(redist)}.xlsx"
 
     df = pd.DataFrame(redist)
     df.columns = headings
@@ -1148,10 +1149,15 @@ def export_redist_energy_data(redist, filename_prefix):
 if __name__ == "__main__":
     # Code to run only when executed from the terminal
 
+    # Set the working directory to the project folder
+    if platform.node() == "DGE-WL-2WNSFX3":
+        os.chdir(r"C:\Users\kcaldeira\My Drive\energy_distribution")
+    else:
+        os.chdir(r"C:\Users\kcaldeira\My Drive\energy_distribution")
 
     # Import the Excel file
     input_data = pd.read_excel(
-        r"C:\Users\kcaldeira\My Drive\Edgar distribution\Data-input_Dioha-et-al_2022-08-05.xlsx",
+        r".\Data-input_Dioha-et-al_2022-08-05.xlsx",
         sheet_name=0
     )
 
@@ -1176,7 +1182,14 @@ if __name__ == "__main__":
 
     run_name = "test"
     filename_prefix = f"{run_name}_p{len(percentile_list) - 1}_e{energy_steps}_{datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]}"
+    
+    # make directory for output files
+    if not os.path.exists(filename_prefix):
+        os.makedirs(filename_prefix)
+    
     verbose_level = 2
+
+
 
     # Start timing
     start_time = time.time()
