@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import datetime
 from scipy.integrate import quad
 from scipy.optimize import minimize
+from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 import math
 import statsmodels.api as sm
@@ -257,17 +258,20 @@ def energy_in_lorenz_range(x0, x1, pp, qq, gamma, energy, energy_integral, epsil
     return (energy / energy_integral) * integral_result
 
 #----------------------------------------------------------------------------------------------------
-#-----------CODE BELOW NOTE USED --------------------------------------------------------------------
+#-----------CODE BELOW NOT USED --------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------------
 # find jantzen volpert fit going through two points
 
-import numpy as np
-from scipy.optimize import curve_fit
 
 def jantzen_volpert_fn(x, p, q):
     return x**p * (1 - (1 - x)**q)
 
-def find_p_q(x0, y0, x1, y1):
+def jantzen_volpert_fn_deriv(x, p, q):
+    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
+    term2 = x**p * q * (1 - x)**(q - 1)
+    return term1 + term2
+
+def find_jantzen_volpert_p_q(x0, y0, x1, y1):
     # Initial guess for p and q
     initial_guess = [0.5, 0.5]
     
@@ -286,6 +290,36 @@ x1, y1 = 0.8, 0.6  # Given values for x1 and f(x1)
 p, q = find_p_q(x0, y0, x1, y1)
 print(f"Estimated p: {p}, Estimated q: {q}")
 """
+
+def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy_dx_end):
+    """
+    Fits a cubic spline ensuring:
+    - Monotonic increasing function
+    - First derivative is continuous and increasing
+    - Uses given first derivatives at the endpoints
+    """
+    # Fit a cubic spline with first derivative constraints at the endpoints
+    spline = CubicSpline(x_data, y_data, bc_type=((1, dy_dx_start), (1, dy_dx_end)), extrapolate=False)
+    
+    return spline
+
+def process_data(x_data, y_data):
+    """
+    Process x_data and y_data to fit Jantzen-Volpert function to the first and last pair of points,
+    compute derivatives, and fit a cubic spline through the intermediate points.
+    """
+    # Fit Jantzen-Volpert function to first and last pair of points
+    p_start, q_start = find_jantzen_volpert_p_q(x_data[0], y_data[0], x_data[1], y_data[1])
+    p_end, q_end = find_jantzen_volpert_p_q(x_data[-2], y_data[-2], x_data[-1], y_data[-1])
+    
+    # Compute derivatives at the second and next-to-last data points
+    dy_dx_start = jantzen_volpert_fn_deriv(x_data[1], p_start, q_start)
+    dy_dx_end = jantzen_volpert_fn_deriv(x_data[-2], p_end, q_end)
+    
+    # Fit the spline using second to next-to-last points
+    spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-1], y_data[1:-1], dy_dx_start, dy_dx_end)
+    
+    return spline, p_start, q_start, p_end, q_end
 
 #----------------------------------------------------------------------------------------------------
 #-----------CODE ABOVE NOTE USED --------------------------------------------------------------------
