@@ -15,7 +15,7 @@ import platform, os
 
 #%% main processing code
 
-def create_key_variables(country_list, percentile_list, filename_prefix, n_energy_levels, int_epsilon, verbose_level):
+def create_key_variables(country_list, percentile_list, filename_prefix, n_energy_levels,  verbose_level):
     """
     Processes input data to compute various energy-related tables.
     
@@ -40,7 +40,7 @@ def create_key_variables(country_list, percentile_list, filename_prefix, n_energ
 
     # Step 2: Generate per capita energy boundaries by country
     per_capita_energy_bdry_country, cum_energy_bdry_country = gen_country_lists_by_fract_of_pop(
-        country_list, percentile_list, f"{filename_prefix}_{len(percentile_list)}", verbose_level
+        country_list, percentile_list,epsilon, verbose_level
     )
 
     # Step 3: Create master table of evenly spaced energy levels
@@ -78,7 +78,7 @@ def create_key_variables(country_list, percentile_list, filename_prefix, n_energ
 
 #----------------------------------------------------------------------------------------------
 
-def prep_country_level_data(input_data, int_epsilon, verbose_level):
+def prep_country_level_data(input_data, epsilon, verbose_level):
     """
     Prepares country-level data by computing parameters like gamma, Lorenz curve fits,
     and Gini coefficients for income and energy distribution.
@@ -110,7 +110,7 @@ def prep_country_level_data(input_data, int_epsilon, verbose_level):
 
     # Step 4: Compute integral list for energy Lorenz bin
     integral_list = [
-        energy_lorenz_bin(int_epsilon, 1.-int_epsilon, rmspq[1], rmspq[2], gamma, 1, 1)
+        energy_in_lorenz_range(0., 1.-epsilon, rmspq[1], rmspq[2], gamma, 1, 1, epsilon)
         for rmspq in rmspq_list
     ]
 
@@ -120,12 +120,12 @@ def prep_country_level_data(input_data, int_epsilon, verbose_level):
         for rmspq in rmspq_list
     ]
 
-    # Step 6: Compute energy Gini list
+   # Step 6: Compute energy Gini list
     energy_gini_list = [
-        1 - integral_energy_lorenz(rmspq[1], rmspq[2], gamma, 1, 1) /
-            (energy_lorenz_bin(0., 1.-int_epsilon, rmspq[1], rmspq[2], gamma, 1, 1) / 2)
-        for rmspq in rmspq_list
+        1 - integral_energy_lorenz(rmspq_list[idx][1], rmspq_list[idx][2], gamma, 1, integral_list[idx],epsilon) / 0.5
+        for idx  in range(len(rmspq_list))
     ]
+
 
     # Step 7: Create country summary table
     country_summary_data = {
@@ -148,7 +148,7 @@ def prep_country_level_data(input_data, int_epsilon, verbose_level):
 
 #-------------------------------------------------------------------------------------------------------------
 
-def integral_energy_lorenz(pp, qq, gamma, energy, energy_integral):
+def integral_energy_lorenz(pp, qq, gamma, energy, energy_integral,epsilon):
     """
     Computes the integral of the energy Lorenz bin over the range [0, 1].
 
@@ -170,10 +170,10 @@ def integral_energy_lorenz(pp, qq, gamma, energy, energy_integral):
     """
     # Function to integrate
     def integrand(x0):
-        return energy_lorenz_bin(0, x0, pp, qq, gamma, energy, energy_integral)
+        return energy_in_lorenz_range(0, x0, pp, qq, gamma, energy, energy_integral,epsilon)
 
     # Perform the numerical integration
-    result, _ = quad(integrand, 0, 1, epsrel = 1e-14)  # Integrate over the range [0, 1]
+    result, _ = quad(integrand, 0, 1, epsrel = epsilon)  # Integrate over the range [0, 1]
     return result
 
 #-------------------------------------------------------------------------------------------------------------
@@ -218,7 +218,7 @@ def energy_per_capita_fn(x, pp, qq, gamma, pop, energy, energy_integral):
 
 #-------------------------------------------------------------------------------------------------------------
 
-def energy_lorenz_bin(x0, x1, pp, qq, gamma, energy, energy_integral):
+def energy_in_lorenz_range(x0, x1, pp, qq, gamma, energy, energy_integral, epsilon):
     """
     Computes the energy Lorenz bin integral over a specified range.
 
@@ -249,7 +249,7 @@ def energy_lorenz_bin(x0, x1, pp, qq, gamma, energy, energy_integral):
                 qq * (1 - x)**(-1 + qq) * x**pp)**gamma
 
     # Perform the numerical integration over [x0, x1]
-    integral_result, _ = quad(integrand, x0, x1, epsrel = 1e-14)
+    integral_result, _ = quad(integrand, x0, x1, epsrel = epsilon)
 
     # Scale the result by energy and energyIntegral
     if energy_integral == 0:
@@ -327,7 +327,7 @@ def fit_country(input_data_country, verbose):
 
 #-------------------------------------------------------------------------------------------------------------
 
-def gen_country_lists_by_fract_of_pop(country_list, percentile_list, filename_prefix, verbose_level):
+def gen_country_lists_by_fract_of_pop(country_list, percentile_list, epsilon, verbose_level):
     """
     Generates lists of per capita energy use and cumulative energy use
     by population percentile for each country.
@@ -369,14 +369,15 @@ def gen_country_lists_by_fract_of_pop(country_list, percentile_list, filename_pr
     # Generate cumulative energy use by population percentile
     cum_energy_bdry_country = np.array([
         np.cumsum([
-            energy_lorenz_bin(
+            energy_in_lorenz_range(
                 percentile_list[max(0, i - 1)],
                 percentile_list[i],
                 country_list["P"][idx_country],
                 country_list["Q"][idx_country],
                 country_list["Gamma"][idx_country],
                 country_list["Energy"][idx_country],
-                country_list["Integral"][idx_country]
+                country_list["Integral"][idx_country],
+                epsilon
             )
             for i in range(len(percentile_list))
         ])
@@ -1172,7 +1173,6 @@ if __name__ == "__main__":
     global_bins_out = 1000 # number of bins for output
     
     epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
-    int_epsilon = 0.001 # epsilon value for integrating energy use in a country
     percentile_list = (np.arange(0, 1 + pct_steps, pct_steps)).tolist()
     percentile_list[0] = epsilon
     percentile_list[-1] = 1.0 - epsilon
@@ -1196,9 +1196,9 @@ if __name__ == "__main__":
 
     # Step 1: Prepare country-level data
 
-    country_list = prep_country_level_data(input_data, int_epsilon, verbose_level)
+    country_list = prep_country_level_data(input_data, epsilon, verbose_level)
 
-    key_variables = create_key_variables(country_list, percentile_list, filename_prefix, energy_steps, int_epsilon, verbose_level)
+    key_variables = create_key_variables(country_list, percentile_list, filename_prefix, energy_steps, verbose_level)
     elapsed_time = time.time() - start_time
 
     # Print the timing result
