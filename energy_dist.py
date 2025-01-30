@@ -256,8 +256,42 @@ def energy_in_lorenz_range(x0, x1, pp, qq, gamma, energy, energy_integral, epsil
         return 0
     return (energy / energy_integral) * integral_result
 
-#-------------------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------
+#-----------CODE BELOW NOTE USED --------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------
+# find jantzen volpert fit going through two points
 
+import numpy as np
+from scipy.optimize import curve_fit
+
+def jantzen_volpert_fn(x, p, q):
+    return x**p * (1 - (1 - x)**q)
+
+def find_p_q(x0, y0, x1, y1):
+    # Initial guess for p and q
+    initial_guess = [0.5, 0.5]
+    
+    # Data points
+    x_data = np.array([x0, x1])
+    y_data = np.array([y0, y1])
+    
+    # Curve fitting to determine p and q
+    popt, _ = curve_fit(jantzen_volpert_fn, x_data, y_data, p0=initial_guess, bounds=((0, 0), (1, 1)))
+    
+    return popt[0], popt[1]  # p and q
+"""
+# Example usage
+x0, y0 = 0.2, 0.1  # Given values for x0 and f(x0)
+x1, y1 = 0.8, 0.6  # Given values for x1 and f(x1)
+p, q = find_p_q(x0, y0, x1, y1)
+print(f"Estimated p: {p}, Estimated q: {q}")
+"""
+
+#----------------------------------------------------------------------------------------------------
+#-----------CODE ABOVE NOTE USED --------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------
+
+#-----------------------------------------
 
 def fit_country(input_data_country, verbose):
     """
