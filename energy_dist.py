@@ -13,10 +13,11 @@ import math
 import statsmodels.api as sm
 import time
 import platform, os
+from scipy.special import beta as beta_func, betainc
 
 #%% main processing code
 
-def create_key_variables(country_list, percentile_list, filename_prefix, n_energy_levels,  verbose_level):
+def create_key_variables(country_list, percentile_list, n_energy_levels,  verbose_level):
     """
     Processes input data to compute various energy-related tables.
     
@@ -79,7 +80,7 @@ def create_key_variables(country_list, percentile_list, filename_prefix, n_energ
 
 #----------------------------------------------------------------------------------------------
 
-def prep_country_level_data(input_data, epsilon, verbose_level):
+def prep_country_level_data(input_data, gamma, epsilon, verbose_level):
     """
     Prepares country-level data by computing parameters like gamma, Lorenz curve fits,
     and Gini coefficients for income and energy distribution.
@@ -88,6 +89,8 @@ def prep_country_level_data(input_data, epsilon, verbose_level):
         input_data: pandas.DataFrame
             Input data containing country-level information. Assumes the first row contains labels,
             the second row contains global parameters, and subsequent rows contain country data.
+        gamma: float
+            Elasticity parameter for energy use.
         verbose_level: int
             Level of verbosity for print statements.
 
@@ -95,14 +98,9 @@ def prep_country_level_data(input_data, epsilon, verbose_level):
         pd.DataFrame
             A DataFrame summarizing country-level information.
     """
-    # Step 1: Compute gamma (global elasticity of energy use)
-    gamma_res = compute_elasticity_of_energy_use(input_data)
-    gamma = gamma_res[0]
-    if verbose_level > 0:
-        print(f"Gamma: {gamma}")
 
     # Step 2: Compute country-level parameters for fits to income Lorenz curve
-    rmspq_list = [fit_country(row, verbose_level) for row in input_data.iloc[1:].to_numpy()]
+    lorenz_interpolation_list_country = [find_lorenz_interpolation_country(row, verbose_level) for row in input_data.iloc[1:].to_numpy()]
 
     # Step 3: Get country-level population, GDP, and energy data
     pop_list = 1000.0 * input_data.iloc[1:, 4].to_numpy()
@@ -112,19 +110,19 @@ def prep_country_level_data(input_data, epsilon, verbose_level):
     # Step 4: Compute integral list for energy Lorenz bin
     integral_list = [
         energy_in_lorenz_range(0., 1.-epsilon, rmspq[1], rmspq[2], gamma, 1, 1, epsilon)
-        for rmspq in rmspq_list
+        for rmspq in lorenz_interpolation_list_country
     ]
 
     # Step 5: Compute income Gini list
     income_gini_list = [
         1 - integral_income_lorenz(rmspq[1], rmspq[2]) / 0.5
-        for rmspq in rmspq_list
+        for rmspq in lorenz_interpolation_list_country
     ]
 
    # Step 6: Compute energy Gini list
     energy_gini_list = [
-        1 - integral_energy_lorenz(rmspq_list[idx][1], rmspq_list[idx][2], gamma, 1, integral_list[idx],epsilon) / 0.5
-        for idx  in range(len(rmspq_list))
+        1 - integral_energy_lorenz(lorenz_interpolation_list_country[idx][1], lorenz_interpolation_list_country[idx][2], gamma, 1, integral_list[idx],epsilon) / 0.5
+        for idx  in range(len(lorenz_interpolation_list_country))
     ]
 
 
@@ -132,9 +130,9 @@ def prep_country_level_data(input_data, epsilon, verbose_level):
     country_summary_data = {
         "Country Name": input_data.iloc[1:, 1].to_numpy().tolist(),
         "Country Code": input_data.iloc[1:, 2].to_numpy().tolist(),
-        "RMS": [rmspq[0] for rmspq in rmspq_list],
-        "P": [rmspq[1] for rmspq in rmspq_list],  # Extract P (pp) into its own list
-        "Q": [rmspq[2] for rmspq in rmspq_list],  # Extract Q (qq) into its own list
+        "RMS": [rmspq[0] for rmspq in lorenz_interpolation_list_country],
+        "P": [rmspq[1] for rmspq in lorenz_interpolation_list_country],  # Extract P (pp) into its own list
+        "Q": [rmspq[2] for rmspq in lorenz_interpolation_list_country],  # Extract Q (qq) into its own list
         "Population": pop_list.tolist(),
         "GDP": gdp_list.tolist(),
         "Energy": energy_list.tolist(),
@@ -147,7 +145,292 @@ def prep_country_level_data(input_data, epsilon, verbose_level):
 
     return country_summary_data
 
-#-------------------------------------------------------------------------------------------------------------
+#-----------------------------------------
+
+def find_lorenz_interpolation_country(input_data, epsilon, verbose):
+    """
+    Fits parameters pp and qq for a country using income Lorenz curve data.
+
+    Parameters:
+        input_data_country: list or numpy array
+            One row of input data corresponding to a country.
+        epsilon: float
+            Small value used for tolerances, etc
+        verbose: integer
+            Whether to print detailed information.
+
+    Returns:
+        tuple:
+            (rms, p, q): Root mean square error, and fitted parameters p (pp) and q (qq).
+    """
+   
+    # Population and cumulative income levels
+    cum_pop_levels = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
+    cum_inc_levels = np.cumsum(input_data.iloc[:,8,18].to_numpy())
+
+    # Note the assumption is that the last column of cum_inc_levels is equal to 1
+
+    curve_fit = np.array([find_lorenz_interpolation(cum_pop_levels, row) for row in cum_inc_levels])
+
+    # Objective function to minimize
+    def objective(params):
+        pp, qq = params
+        y_test = np.zeros_like(y)
+        y_test[1:] = x[1:]**pp * (1 - (1 - x[1:])**qq)
+        # Compute RMS error
+        error = pop_levels * ((np.diff(y_test) / np.diff(y)) - 1)**2
+        return np.sum(error)
+
+    # Initial guesses and bounds for pp and qq
+    initial_guess = [0.8, 0.6]
+    bounds = [(epsilon, 1 - epsilon), (epsilon, 1 - epsilon)]
+
+    # Minimize the objective function
+    result = minimize(objective, initial_guess, bounds=bounds, tol =1e-14)
+
+    # Extract the results
+    rms = result.fun
+    p = abs(result.x[0])
+    q = abs(result.x[1])
+
+    # Verbose output
+    if verbose:
+        print(f"RMS: {rms}, pp: {p}, qq: {q}")
+
+    return rms, p, q
+
+#----------------------------------------------------------------------------------------------------
+#-----------CODE TO DO COUNTRY LEVEL FITS -----------------------------------------------------------
+#----------------------------------------------------------------------------------------------------
+# find jantzen volpert fit going through two points
+
+
+def jantzen_volpert_fn(x, p, q):
+    return x**p * (1 - (1 - x)**q)
+
+def jantzen_volpert_fn_deriv(x, p, q):
+    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
+    term2 = x**p * q * (1 - x)**(q - 1)
+    return term1 + term2
+
+def jantzen_volpert_fn_integral(x0, x1, p, q):
+    """
+    Computes:
+      ((-x0^(1+p) + x1^(1+p))/(1+p) + Beta[x0, 1+p, 1+q] - Beta[x1, 1+p, 1+q])
+    with the condition that x1 < 1 and x0 > 0.
+    
+    Here, Beta[x, a, b] is the (lower) incomplete beta function:
+      Beta[x, a, b] = int_0^x t^(a-1) * (1-t)^(b-1) dt.
+      
+    In SciPy, betainc(a, b, x) returns the regularized incomplete beta function I_x(a,b),
+    so we multiply by beta(a, b) to get the unregularized value.
+    """
+    # Compute the first term
+    term1 = (-x0**(1+p) + x1**(1+p)) / (1+p)
+
+    # Compute the unregularized incomplete beta functions for x0 and x1.
+    # Note: In SciPy, the lower incomplete beta is computed as:
+    #       B_x(a,b) = betainc(a, b, x) * beta(a, b)
+    a = 1 + p
+    b = 1 + q
+    incomplete_beta_x0 = betainc(a, b, x0) * beta_func(a, b)
+    incomplete_beta_x1 = betainc(a, b, x1) * beta_func(a, b)
+
+    return term1 + incomplete_beta_x0 - incomplete_beta_x1
+
+def find_jantzen_volpert_p_q(x0, y0, x1, y1):
+    # Initial guess for p and q
+    initial_guess = [0.5, 0.5]
+    
+    # Data points
+    x_data = np.array([x0, x1])
+    y_data = np.array([y0, y1])
+    
+    # Curve fitting to determine p and q
+    popt, _ = curve_fit(jantzen_volpert_fn, x_data, y_data, p0=initial_guess, bounds=((0, 0), (1, 1)))
+    
+    return popt[0], popt[1]  # p and q
+"""
+# Example usage
+x0, y0 = 0.2, 0.1  # Given values for x0 and f(x0)
+x1, y1 = 0.8, 0.6  # Given values for x1 and f(x1)
+p, q = find_p_q(x0, y0, x1, y1)
+print(f"Estimated p: {p}, Estimated q: {q}")
+"""
+
+def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy_dx_end):
+    """
+    Fits a cubic spline ensuring:
+    - Monotonic increasing function
+    - First derivative is continuous and increasing
+    - Uses given first derivatives at the endpoints
+    """
+    # Fit a cubic spline with first derivative constraints at the endpoints
+    spline = CubicSpline(x_data, y_data, bc_type=((1, dy_dx_start), (1, dy_dx_end)), extrapolate=False)
+    
+    return spline
+
+def find_lorenz_interpolation(x_data, y_data):
+    """
+    Process x_data and y_data to fit Jantzen-Volpert function to the first and last pair of points,
+    compute derivatives, and fit a cubic spline through the intermediate points.
+    """
+    # Fit Jantzen-Volpert function to first and last pair of points
+    p_start, q_start = find_jantzen_volpert_p_q(x_data[0], y_data[0], x_data[1], y_data[1])
+    p_end, q_end = find_jantzen_volpert_p_q(x_data[-2], y_data[-2], x_data[-1], y_data[-1])
+    
+    # Compute derivatives at the second and next-to-last data points
+    dy_dx_start = jantzen_volpert_fn_deriv(x_data[1], p_start, q_start)
+    dy_dx_end = jantzen_volpert_fn_deriv(x_data[-2], p_end, q_end)
+    
+    # Fit the spline using second to next-to-last points
+    spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-1], y_data[1:-1], dy_dx_start, dy_dx_end)
+    
+    return spline, p_start, q_start, p_end, q_end
+
+def compute_income_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right):
+    
+    # Integrate the left analytic segment from 0 to x_data[1].
+    integral_left = jantzen_volpert_fn_integral(0, x_data[1],p_left, q_left)
+    
+    # Integrate the middle spline segment using its antiderivative.
+    spline_antideriv = spline.antiderivative()
+    integral_middle = spline_antideriv(x_data[-2]) - spline_antideriv(x_data[1])
+    
+    # Integrate the right analytic segment from x_data[-2] to 1.
+    integral_right =  jantzen_volpert_fn_integral(x_data[-2], 1, p_right, q_right)
+    
+    # Sum the three pieces to get the total integral.
+    total_integral = integral_left + integral_middle + integral_right
+
+    return total_integral
+
+def compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma):
+    """
+    Integrates f(x)^gamma over [0, 1] where f(x) is defined piecewise:
+      - For x in [0, x_data[1]]: f(x) = jantzen_volpert_fn(x, p_left, q_left)
+      - For x in [x_data[1], x_data[-2]]: f(x) = spline(x)
+      - For x in [x_data[-2], 1]: f(x) = jantzen_volpert_fn(x, p_right, q_right)
+      
+    Parameters:
+        x_data : array-like
+            Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
+        spline : CubicSpline
+            The fitted spline function for the middle segment.
+        p_left, q_left : float
+            Parameters for the analytic function on the left segment.
+        p_right, q_right : float
+            Parameters for the analytic function on the right segment.
+        gamma : float
+            The exponent to which f(x) is raised.
+            
+    Returns:
+        total_integral : float
+            The numerical value of the integral of f(x)^gamma from 0 to 1.
+    """
+    # Integrate the left analytic segment from 0 to x_data[1]:
+    integral_left, _ = quad(lambda x: jantzen_volpert_fn(x, p_left, q_left)**gamma,
+                            0, x_data[1])
+    
+    # Integrate the middle spline segment numerically from x_data[1] to x_data[-2]:
+    integral_middle, _ = quad(lambda x: spline(x)**gamma, x_data[1], x_data[-2])
+    
+    # Integrate the right analytic segment from x_data[-2] to 1:
+    integral_right, _ = quad(lambda x: jantzen_volpert_fn(x, p_right, q_right)**gamma,
+                             x_data[-2], 1)
+    
+    # Sum the three pieces to get the total integral:
+    total_integral = integral_left + integral_middle + integral_right
+    return total_integral
+
+def compute_d_income_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right):
+    """
+    Computes the derivative of the piecewise function f(x) at a given x, where f(x)
+    is defined as:
+      - For x in [0, x_data[1]]:
+            f(x) = jantzen_volpert_fn(x, p_left, q_left)
+      - For x in [x_data[1], x_data[-2]]:
+            f(x) = spline(x)
+      - For x in [x_data[-2], 1]:
+            f(x) = jantzen_volpert_fn(x, p_right, q_right)
+            
+    Parameters:
+        x : float
+            The point at which the derivative is evaluated.
+        x_data : array-like
+            Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
+        spline : CubicSpline
+            The fitted spline function for the middle segment.
+        p_left, q_left : float
+            Parameters for the analytic function on the left segment.
+        p_right, q_right : float
+            Parameters for the analytic function on the right segment.
+            
+    Returns:
+        float
+            The derivative f'(x) evaluated at the given x.
+    """
+    # Left analytic segment: 0 <= x <= x_data[1]
+    if x <= x_data[1]:
+        return jantzen_volpert_fn_deriv(x, p_left, q_left)
+    
+    # Middle spline segment: x_data[1] < x < x_data[-2]
+    elif x < x_data[-2]:
+        # Compute the derivative using the spline's derivative.
+        return spline.derivative()(x)
+    
+    # Right analytic segment: x_data[-2] <= x <= 1
+    else:
+        return jantzen_volpert_fn_deriv(x, p_right, q_right)
+    
+def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma):
+    """
+    Computes the derivative of f(x)^gamma with respect to x for 0 <= x <= 1, where f(x) is defined piecewise as:
+      - For x in [0, x_data[1]]:
+            f(x) = jantzen_volpert_fn(x, p_left, q_left)
+      - For x in [x_data[1], x_data[-2]]:
+            f(x) = spline(x)
+      - For x in [x_data[-2], 1]:
+            f(x) = jantzen_volpert_fn(x, p_right, q_right)
+    
+    The derivative is computed as:
+    
+        d/dx (f(x)^gamma) = gamma * f(x)^(gamma-1) * f'(x)
+    
+    Parameters:
+        x : float
+            The point at which to evaluate the derivative.
+        x_data : array-like
+            Array of x-values spanning [0, 1].
+        spline : CubicSpline
+            The fitted spline function for the middle segment.
+        p_left, q_left : float
+            Parameters for the analytic function on the left segment.
+        p_right, q_right : float
+            Parameters for the analytic function on the right segment.
+        gamma : float
+            The exponent applied to f(x).
+    
+    Returns:
+        float
+            The derivative of f(x)^gamma at the point x.
+    """
+    # Compute f(x) and f'(x) based on which segment x falls into.
+    if x <= x_data[1]:
+        f_val = jantzen_volpert_fn(x, p_left, q_left)
+        f_prime = jantzen_volpert_fn_deriv(x, p_left, q_left)
+    elif x < x_data[-2]:
+        f_val = spline(x)
+        f_prime = spline.derivative()(x)
+    else:
+        f_val = jantzen_volpert_fn(x, p_right, q_right)
+        f_prime = jantzen_volpert_fn_deriv(x, p_right, q_right)
+    
+    return gamma * f_val**(gamma - 1) * f_prime
+
+#----------------------------------------------------------------------------------------------------
+#-----------CODE ABOVE NOTE USED --------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------------
 
 def integral_energy_lorenz(pp, qq, gamma, energy, energy_integral,epsilon):
     """
@@ -257,141 +540,8 @@ def energy_in_lorenz_range(x0, x1, pp, qq, gamma, energy, energy_integral, epsil
         return 0
     return (energy / energy_integral) * integral_result
 
-#----------------------------------------------------------------------------------------------------
-#-----------CODE BELOW NOT USED --------------------------------------------------------------------
-#----------------------------------------------------------------------------------------------------
-# find jantzen volpert fit going through two points
 
 
-def jantzen_volpert_fn(x, p, q):
-    return x**p * (1 - (1 - x)**q)
-
-def jantzen_volpert_fn_deriv(x, p, q):
-    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
-    term2 = x**p * q * (1 - x)**(q - 1)
-    return term1 + term2
-
-def find_jantzen_volpert_p_q(x0, y0, x1, y1):
-    # Initial guess for p and q
-    initial_guess = [0.5, 0.5]
-    
-    # Data points
-    x_data = np.array([x0, x1])
-    y_data = np.array([y0, y1])
-    
-    # Curve fitting to determine p and q
-    popt, _ = curve_fit(jantzen_volpert_fn, x_data, y_data, p0=initial_guess, bounds=((0, 0), (1, 1)))
-    
-    return popt[0], popt[1]  # p and q
-"""
-# Example usage
-x0, y0 = 0.2, 0.1  # Given values for x0 and f(x0)
-x1, y1 = 0.8, 0.6  # Given values for x1 and f(x1)
-p, q = find_p_q(x0, y0, x1, y1)
-print(f"Estimated p: {p}, Estimated q: {q}")
-"""
-
-def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy_dx_end):
-    """
-    Fits a cubic spline ensuring:
-    - Monotonic increasing function
-    - First derivative is continuous and increasing
-    - Uses given first derivatives at the endpoints
-    """
-    # Fit a cubic spline with first derivative constraints at the endpoints
-    spline = CubicSpline(x_data, y_data, bc_type=((1, dy_dx_start), (1, dy_dx_end)), extrapolate=False)
-    
-    return spline
-
-def process_data(x_data, y_data):
-    """
-    Process x_data and y_data to fit Jantzen-Volpert function to the first and last pair of points,
-    compute derivatives, and fit a cubic spline through the intermediate points.
-    """
-    # Fit Jantzen-Volpert function to first and last pair of points
-    p_start, q_start = find_jantzen_volpert_p_q(x_data[0], y_data[0], x_data[1], y_data[1])
-    p_end, q_end = find_jantzen_volpert_p_q(x_data[-2], y_data[-2], x_data[-1], y_data[-1])
-    
-    # Compute derivatives at the second and next-to-last data points
-    dy_dx_start = jantzen_volpert_fn_deriv(x_data[1], p_start, q_start)
-    dy_dx_end = jantzen_volpert_fn_deriv(x_data[-2], p_end, q_end)
-    
-    # Fit the spline using second to next-to-last points
-    spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-1], y_data[1:-1], dy_dx_start, dy_dx_end)
-    
-    return spline, p_start, q_start, p_end, q_end
-
-#----------------------------------------------------------------------------------------------------
-#-----------CODE ABOVE NOTE USED --------------------------------------------------------------------
-#----------------------------------------------------------------------------------------------------
-
-#-----------------------------------------
-
-def fit_country(input_data_country, verbose):
-    """
-    Fits parameters pp and qq for a country using income Lorenz curve data.
-
-    Parameters:
-        input_data_country: list or numpy array
-            One row of input data corresponding to a country.
-        verbose: bool
-            Whether to print detailed information.
-
-    Returns:
-        tuple:
-            (rms, p, q): Root mean square error, and fitted parameters p (pp) and q (qq).
-    """
-    epsilon = 1e-6  # Small value to avoid boundary issues
-
-    # Population and cumulative income levels
-    pop_levels = [0.1, 0.1, 0.2, 0.2, 0.2, 0.1, 0.1]
-    cum_inc_levels = np.array( [
-        input_data_country[11],
-        input_data_country[12] - input_data_country[11],
-        input_data_country[13],
-        input_data_country[14],
-        input_data_country[8],
-        input_data_country[10] - input_data_country[9],
-        input_data_country[9]
-        ] )/ 100.0  # Convert percentage to a fraction
-
-    # Construct country-level data
-    country_level_data = np.cumsum(
-        [[0, 0]] + list(zip(pop_levels, cum_inc_levels)), axis=0
-    )
-    # Normalize cumulative income levels
-    country_level_data[:, 1] /= country_level_data[-1, 1]
-
-    # Extract x and y values
-    x = country_level_data[:, 0]
-    y = country_level_data[:, 1]
-
-    # Objective function to minimize
-    def objective(params):
-        pp, qq = params
-        y_test = np.zeros_like(y)
-        y_test[1:] = x[1:]**pp * (1 - (1 - x[1:])**qq)
-        # Compute RMS error
-        error = pop_levels * ((np.diff(y_test) / np.diff(y)) - 1)**2
-        return np.sum(error)
-
-    # Initial guesses and bounds for pp and qq
-    initial_guess = [0.8, 0.6]
-    bounds = [(epsilon, 1 - epsilon), (epsilon, 1 - epsilon)]
-
-    # Minimize the objective function
-    result = minimize(objective, initial_guess, bounds=bounds, tol =1e-14)
-
-    # Extract the results
-    rms = result.fun
-    p = abs(result.x[0])
-    q = abs(result.x[1])
-
-    # Verbose output
-    if verbose:
-        print(f"RMS: {rms}, pp: {p}, qq: {q}")
-
-    return rms, p, q
 
 #-------------------------------------------------------------------------------------------------------------
 
@@ -1218,53 +1368,53 @@ def export_redist_energy_data(redist, filename_prefix):
 if __name__ == "__main__":
     # Code to run only when executed from the terminal
 
+    #--------------------------------------------------------------------------
+    # Key run time parameters
+    run_name = "test"  # Name of the run
+    pct_steps = 10000  # 100 for testing, 10000 for production
+    energy_steps = 1000 # 100 for test and summary output, 1000 for production
+    global_bins_out = 1000 # number of bins for output
+    verbose_level = 2
+    dir = r"C:\Users\kcaldeira\My Drive\energy_distribution"
+    data_input_file_name = "Data-input_Virguez-et-al_2025_2025-01-29.xlsx"
+    epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
+   #--------------------------------------------------------------------------
+
     # Set the working directory to the project folder
-    if platform.node() == "DGE-WL-2WNSFX3":
-        os.chdir(r"C:\Users\kcaldeira\My Drive\energy_distribution")
-    else:
-        os.chdir(r"C:\Users\kcaldeira\My Drive\energy_distribution")
+    os.chdir(dir)
 
     # Import the Excel file
-    input_data = pd.read_excel(
-        r".\Data-input_Dioha-et-al_2022-08-05.xlsx",
-        sheet_name=0
-    )
+    input_data = pd.read_excel(data_input_file_name, sheet_name=0)
 
     # Get the dimensions of the data frame
     dimensions = input_data.shape
-
     print(f"Dimensions of the input data: {dimensions}")
-
-    # Global variables
-    pct_steps = 0.0001  # 0.01 for testing, 0.0001 for production
-    energy_steps = 1000 # 100 for test and summary output, 1000 for production
-    global_bins_out = 1000 # number of bins for output
     
-    epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
-    percentile_list = (np.arange(0, 1 + pct_steps, pct_steps)).tolist()
+    pct_dx = 1. / pct_steps
+    percentile_list = (np.arange(0, 1 + pct_dx, pct_dx)).tolist()
     percentile_list[0] = epsilon
     percentile_list[-1] = 1.0 - epsilon
     n_groups = 5
     group_names = ["low", "low-middle", "middle", "middle-high", "high"]
     idx_group = 6 # 6 means energy, 5 means income
 
-    run_name = "test"
-    filename_prefix = f"{run_name}_p{len(percentile_list) - 1}_e{energy_steps}_{datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]}"
+    filename_prefix = f"{run_name}_p{pct_steps}_e{energy_steps}_{datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]}"
     
     # make directory for output files
     if not os.path.exists(filename_prefix):
         os.makedirs(filename_prefix)
-    
-    verbose_level = 2
-
-
 
     # Start timing
     start_time = time.time()
 
+     # Step 0: Compute gamma (global elasticity of energy use)
+    gamma_res = compute_elasticity_of_energy_use(input_data)
+    gamma = gamma_res[0]
+    if verbose_level > 0: print(f"Gamma: {gamma}")
+
     # Step 1: Prepare country-level data
 
-    country_list = prep_country_level_data(input_data, epsilon, verbose_level)
+    country_list = prep_country_level_data(input_data, gamma, epsilon, verbose_level)
 
     key_variables = create_key_variables(country_list, percentile_list, filename_prefix, energy_steps, verbose_level)
     elapsed_time = time.time() - start_time
