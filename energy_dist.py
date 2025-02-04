@@ -5,10 +5,15 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime
+
 from scipy.integrate import quad
 from scipy.optimize import minimize
+from scipy.optimize import minimize_scalar
 from scipy.optimize import curve_fit
+
+from scipy.interpolate import CubicSpline
 from scipy.interpolate import interp1d
+
 import math
 import statsmodels.api as sm
 import time
@@ -16,6 +21,85 @@ import platform, os
 from scipy.special import beta as beta_func, betainc
 
 #%% main processing code
+
+#-------------------------------------------------------------------------------------------------------------
+
+def compute_elasticity_of_energy_use(input_data):
+    """
+    Computes the elasticity of energy use based on input data.
+
+    Parameters:
+        input_data: pandas.DataFrame
+            Input data where rows correspond to countries and columns to various parameters:
+            - Column 5: Population (2019, in thousands)
+            - Column 6: GDP (2019, in 2017 dollars)
+            - Column 7: Energy use (in TJ/year).
+
+    Returns:
+        tuple:
+            - Elasticity coefficient (slope of the regression line).
+            - Adjusted R-squared value.
+            - Standard error of the slope parameter.
+    """
+    # Extract relevant data columns
+    pop = 1000 * input_data.iloc[:, 4].to_numpy()  # Population in number of people (2019)
+    gdp = input_data.iloc[:, 5].to_numpy()         # GDP in 2017 dollars (2019)
+    energy = (10**9 / 8760) * input_data.iloc[:, 6].to_numpy()  # Energy use in kW (average)
+
+    model_params = fit_population_weighted(pop, energy/pop, gdp/pop)
+
+    elasticity_coefficient = model_params[0]
+    r_squared = model_params[2]
+
+    return elasticity_coefficient, r_squared
+
+def fit_population_weighted(pop, per_capita_energy, per_capita_gdp):
+    """
+    Fits the model:
+        log(per_capita_energy) = a * log(per_capita_gdp) + b
+    subject to the constraint:
+        sum(pop * per_capita_energy) = exp(b) * sum(pop * per_capita_gdp^a)
+    
+    The parameter b is eliminated using:
+        b = log(sum(pop * per_capita_energy)) - log(sum(pop * per_capita_gdp^a))
+    
+    The function returns the optimal parameters (a, b) along with the weighted R^2,
+    where the weighted R^2 is computed on the log-transformed per_capita_energy data.
+    
+    Parameters:
+        pop:              numpy array of population weights.
+        per_capita_energy: numpy array of per-capita energy values (must be positive).
+        per_capita_gdp:    numpy array of per-capita GDP values (must be positive).
+    
+    Returns:
+        a_best, b_best, R2: optimal parameters and the weighted fraction of variance explained.
+    """
+    # Define the objective function to minimize over a
+    def objective(a):
+        # Compute b from the constraint for the given a
+        b = np.log(np.sum(pop * per_capita_energy)) - np.log(np.sum(pop * per_capita_gdp**a))
+        # Compute the residuals in the log-space
+        residuals = np.log(per_capita_energy) - a * np.log(per_capita_gdp) - b
+        # Return the population-weighted sum of squared residuals
+        return np.sum(pop * residuals**2)
+    
+    # Minimize the objective function with respect to a
+    result = minimize_scalar(objective)
+    a_best = result.x
+    # Compute b using the optimal a
+    b_best = np.log(np.sum(pop * per_capita_energy)) - np.log(np.sum(pop * per_capita_gdp**a_best))
+    
+    # Now compute the weighted R^2 on the log-transformed per_capita_energy data
+    y = np.log(per_capita_energy)
+    y_pred = a_best * np.log(per_capita_gdp) + b_best
+    # Weighted mean of the observed log per_capita_energy values
+    y_bar = np.sum(pop * y) / np.sum(pop)
+    # Weighted total sum of squares and weighted residual sum of squares
+    SS_tot = np.sum(pop * (y - y_bar)**2)
+    SS_res = np.sum(pop * (y - y_pred)**2)
+    R2 = 1 - SS_res / SS_tot
+    
+    return a_best, b_best, R2
 
 def create_key_variables(country_list, percentile_list, n_energy_levels,  verbose_level):
     """
@@ -26,8 +110,6 @@ def create_key_variables(country_list, percentile_list, n_energy_levels,  verbos
             Path to the Excel file containing country-level data.
         percentile_list: list
             List of percentiles (e.g., np.arange(0, 1.01, 0.01)).
-        filename_prefix: str
-            Text string to incorporate in output file names.
         n_energy_levels: int
             Number of energy levels to compute.
         verbose_level: int
@@ -80,7 +162,7 @@ def create_key_variables(country_list, percentile_list, n_energy_levels,  verbos
 
 #----------------------------------------------------------------------------------------------
 
-def prep_country_level_data(input_data, gamma, epsilon, verbose_level):
+def prep_country_level_data(input_data, gamma, epsilon):
     """
     Prepares country-level data by computing parameters like gamma, Lorenz curve fits,
     and Gini coefficients for income and energy distribution.
@@ -99,13 +181,15 @@ def prep_country_level_data(input_data, gamma, epsilon, verbose_level):
             A DataFrame summarizing country-level information.
     """
 
+    cum_pop_levels = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]
+
     # Step 2: Compute country-level parameters for fits to income Lorenz curve
-    lorenz_interpolation_list_country = [find_lorenz_interpolation_country(row, verbose_level) for row in input_data.iloc[1:].to_numpy()]
+    lorenz_interpolation_list_country = [find_lorenz_interpolation(cum_pop_levels, np.cumsum(row[8:18])) for row in input_data.to_numpy()]
 
     # Step 3: Get country-level population, GDP, and energy data
-    pop_list = 1000.0 * input_data.iloc[1:, 4].to_numpy()
-    gdp_list = input_data.iloc[1:, 5].to_numpy()
-    energy_list = (10**9 / (8760 * 3600)) * input_data.iloc[1:, 6].to_numpy()
+    pop_list = 1000.0 * input_data.iloc[:, 4].to_numpy()
+    gdp_list = input_data.iloc[:, 5].to_numpy()
+    energy_list = (10**9 / (8760 * 3600)) * input_data.iloc[:, 6].to_numpy()
 
     # Step 4: Compute integral list for energy Lorenz bin
     integral_list = [
@@ -128,8 +212,8 @@ def prep_country_level_data(input_data, gamma, epsilon, verbose_level):
 
     # Step 7: Create country summary table
     country_summary_data = {
-        "Country Name": input_data.iloc[1:, 1].to_numpy().tolist(),
-        "Country Code": input_data.iloc[1:, 2].to_numpy().tolist(),
+        "Country Name": input_data.iloc[:, 1].to_numpy().tolist(),
+        "Country Code": input_data.iloc[:, 2].to_numpy().tolist(),
         "RMS": [rmspq[0] for rmspq in lorenz_interpolation_list_country],
         "P": [rmspq[1] for rmspq in lorenz_interpolation_list_country],  # Extract P (pp) into its own list
         "Q": [rmspq[2] for rmspq in lorenz_interpolation_list_country],  # Extract Q (qq) into its own list
@@ -147,57 +231,25 @@ def prep_country_level_data(input_data, gamma, epsilon, verbose_level):
 
 #-----------------------------------------
 
-def find_lorenz_interpolation_country(input_data, epsilon, verbose):
+def find_lorenz_interpolation(x_data, y_data):
     """
-    Fits parameters pp and qq for a country using income Lorenz curve data.
-
-    Parameters:
-        input_data_country: list or numpy array
-            One row of input data corresponding to a country.
-        epsilon: float
-            Small value used for tolerances, etc
-        verbose: integer
-            Whether to print detailed information.
-
-    Returns:
-        tuple:
-            (rms, p, q): Root mean square error, and fitted parameters p (pp) and q (qq).
+    Process x_data and y_data to fit Jantzen-Volpert function to the first and last pair of points,
+    compute derivatives, and fit a cubic spline through the intermediate points.
     """
-   
-    # Population and cumulative income levels
-    cum_pop_levels = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
-    cum_inc_levels = np.cumsum(input_data.iloc[:,8,18].to_numpy())
-
-    # Note the assumption is that the last column of cum_inc_levels is equal to 1
-
-    curve_fit = np.array([find_lorenz_interpolation(cum_pop_levels, row) for row in cum_inc_levels])
-
-    # Objective function to minimize
-    def objective(params):
-        pp, qq = params
-        y_test = np.zeros_like(y)
-        y_test[1:] = x[1:]**pp * (1 - (1 - x[1:])**qq)
-        # Compute RMS error
-        error = pop_levels * ((np.diff(y_test) / np.diff(y)) - 1)**2
-        return np.sum(error)
-
-    # Initial guesses and bounds for pp and qq
-    initial_guess = [0.8, 0.6]
-    bounds = [(epsilon, 1 - epsilon), (epsilon, 1 - epsilon)]
-
-    # Minimize the objective function
-    result = minimize(objective, initial_guess, bounds=bounds, tol =1e-14)
-
-    # Extract the results
-    rms = result.fun
-    p = abs(result.x[0])
-    q = abs(result.x[1])
-
-    # Verbose output
-    if verbose:
-        print(f"RMS: {rms}, pp: {p}, qq: {q}")
-
-    return rms, p, q
+    # Fit Jantzen-Volpert function to first and last pair of points
+    # fit start on 10 and 20% numbers
+    p_start, q_start = find_jantzen_volpert_p_q(x_data[0], y_data[0], x_data[1], y_data[1])
+    # fit end on 80 and 90% numbers
+    p_end, q_end = find_jantzen_volpert_p_q(x_data[-3], y_data[-3], x_data[-2], y_data[-2])
+    
+    # Compute derivatives at the second (20%) and next-to-next-to-last (80%) data points
+    dy_dx_start = jantzen_volpert_fn_deriv(x_data[1], p_start, q_start)
+    dy_dx_end = jantzen_volpert_fn_deriv(x_data[-3], p_end, q_end)
+    
+    # Fit the spline using second to next-to-last points
+    spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-2], y_data[1:-2], dy_dx_start, dy_dx_end)
+    
+    return spline, p_start, q_start, p_end, q_end
 
 #----------------------------------------------------------------------------------------------------
 #-----------CODE TO DO COUNTRY LEVEL FITS -----------------------------------------------------------
@@ -270,23 +322,7 @@ def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy
     
     return spline
 
-def find_lorenz_interpolation(x_data, y_data):
-    """
-    Process x_data and y_data to fit Jantzen-Volpert function to the first and last pair of points,
-    compute derivatives, and fit a cubic spline through the intermediate points.
-    """
-    # Fit Jantzen-Volpert function to first and last pair of points
-    p_start, q_start = find_jantzen_volpert_p_q(x_data[0], y_data[0], x_data[1], y_data[1])
-    p_end, q_end = find_jantzen_volpert_p_q(x_data[-2], y_data[-2], x_data[-1], y_data[-1])
-    
-    # Compute derivatives at the second and next-to-last data points
-    dy_dx_start = jantzen_volpert_fn_deriv(x_data[1], p_start, q_start)
-    dy_dx_end = jantzen_volpert_fn_deriv(x_data[-2], p_end, q_end)
-    
-    # Fit the spline using second to next-to-last points
-    spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-1], y_data[1:-1], dy_dx_start, dy_dx_end)
-    
-    return spline, p_start, q_start, p_end, q_end
+
 
 def compute_income_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right):
     
@@ -700,48 +736,6 @@ def integral_income_lorenz(p, q):
     """
     return 1 / (1 + p) - (math.gamma(1 + p) * math.gamma(1 + q)) / math.gamma(2 + p + q)
 
-#-------------------------------------------------------------------------------------------------------------
-
-def compute_elasticity_of_energy_use(input_data):
-    """
-    Computes the elasticity of energy use based on input data.
-
-    Parameters:
-        input_data: pandas.DataFrame
-            Input data where rows correspond to countries and columns to various parameters:
-            - Column 5: Population (2019, in thousands)
-            - Column 6: GDP (2019, in 2017 dollars)
-            - Column 7: Energy use (in TJ/year).
-
-    Returns:
-        tuple:
-            - Elasticity coefficient (slope of the regression line).
-            - Adjusted R-squared value.
-            - Standard error of the slope parameter.
-    """
-    # Extract relevant data columns
-    pop = 1000 * input_data.iloc[1:, 4].to_numpy()  # Population in number of people (2019)
-    gdp = input_data.iloc[1:, 5].to_numpy()         # GDP in 2017 dollars (2019)
-    energy = (10**9 / 8760) * input_data.iloc[1:, 6].to_numpy()  # Energy use in kW (average)
-
-    # Compute per capita values
-    log_gdp_per_capita = np.log(gdp / pop)
-    log_energy_per_capita = np.log(energy / pop)
-
-    # Prepare the regression model
-    X = sm.add_constant(log_gdp_per_capita)  # Add intercept term
-    y = log_energy_per_capita
-    weights = pop
-
-    # Fit a weighted least squares regression
-    model = sm.WLS(y, X, weights=weights).fit()
-
-    # Extract results
-    elasticity_coefficient = model.params[1]  # Slope (elasticity)
-    adjusted_r_squared = model.rsquared_adj   # Adjusted R-squared
-    slope_std_error = model.bse[1]            # Standard error of the slope
-
-    return elasticity_coefficient, adjusted_r_squared, slope_std_error
 
 #-------------------------------------------------------------------------------------------------------------
 
@@ -788,8 +782,8 @@ def find_country_groups_per_capita(input_data, n_groups, idx_group):
             A list where each element corresponds to a group's countries.
     """
     # Step 1: Sort data by the chosen per capita metric
-    input_data["PerCapita"] = input_data.iloc[1:, idx_group] / input_data.iloc[1:, 4]  # Per capita value (e.g., income/pop)
-    sorted_data = input_data.iloc[1:].sort_values(by="PerCapita").reset_index(drop=True)
+    input_data["PerCapita"] = input_data.iloc[:, idx_group] / input_data.iloc[:, 4]  # Per capita value (e.g., income/pop)
+    sorted_data = input_data.sort_values(by="PerCapita").reset_index(drop=True)
 
     # Step 2: Calculate cumulative population, income, and energy
     cum_pop = sorted_data.iloc[:, 4].cumsum()
@@ -897,7 +891,7 @@ def export_groups_percentile(groups, group_names, group_type, input_data,
     # Step 1: Compute population groups
     ### CHECK ON INDIEXING
     population_groups = [
-        [input_data.iloc[ 1+idx, 4] for idx in group] for group in groups
+        [input_data.iloc[ idx, 4] for idx in group] for group in groups
     ]
 
     # Step 2: Calculate group per capita energy use
@@ -1055,7 +1049,7 @@ def export_countries_percentile(input_data, percentile_list,
         None
     """
     # Step 1: Prepare per capita energy use data
-    country_info = input_data.iloc[1:, [1, 2]].values  # Extract country names and codes
+    country_info = input_data.iloc[:, [1, 2]].values  # Extract country names and codes
     out_pc = [["per capita energy use by percentile", "kW"] + percentile_list] + \
              [list(country_info[idx]) + per_capita_energy_bdry_country[idx].tolist()
               for idx in range(len(per_capita_energy_bdry_country))]
@@ -1376,7 +1370,8 @@ if __name__ == "__main__":
     global_bins_out = 1000 # number of bins for output
     verbose_level = 2
     dir = r"C:\Users\kcaldeira\My Drive\energy_distribution"
-    data_input_file_name = "Data-input_Virguez-et-al_2025_2025-01-29.xlsx"
+    data_input_file_name = "Data-input_Virguez-et-al_2025-01-29.xlsx"
+    #data_input_file_name = "Data-input_Dioha-et-al_2022-08-05.xlsx"
     epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
    #--------------------------------------------------------------------------
 
@@ -1414,9 +1409,9 @@ if __name__ == "__main__":
 
     # Step 1: Prepare country-level data
 
-    country_list = prep_country_level_data(input_data, gamma, epsilon, verbose_level)
+    country_list = prep_country_level_data(input_data, gamma, epsilon)
 
-    key_variables = create_key_variables(country_list, percentile_list, filename_prefix, energy_steps, verbose_level)
+    key_variables = create_key_variables(country_list, percentile_list, energy_steps, verbose_level)
     elapsed_time = time.time() - start_time
 
     # Print the timing result
