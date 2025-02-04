@@ -101,6 +101,121 @@ def fit_population_weighted(pop, per_capita_energy, per_capita_gdp):
     
     return a_best, b_best, R2
 
+#-------------------------------------------------------------------------------------------------------------
+
+def export_redist_energy_data(redist, filename_prefix):
+    """
+    Exports redistribution energy data with appropriate headings to an excel file
+    Parameters:
+        redist: numpy.ndarray
+            Redistribution data as a table with columns:
+            - Lower bound
+            - Higher bound
+            - Fraction of global energy supply required
+            - Fraction of global energy supply made available
+        filename_prefix: str
+            Name used in the output file name.
+        run_name: str
+            run_name used in the output file name.
+
+    Returns:
+        None
+    """
+    # Define column headings
+    headings = [
+        "lower bound",
+        "higher bound",
+        "fraction of global energy supply required to bring everyone "
+        "below this level to the upper bound of this level",
+        "fraction of global energy supply made available if everyone "
+        "above this level came down to the per capita energy use of this lower bound"
+    ]
+
+    # Create the output file name
+    file_name = f"./{filename_prefix}/{filename_prefix}_global_redist_various_b{len(redist)}.xlsx"
+
+    df = pd.DataFrame(redist)
+    df.columns = headings
+
+    # Export to excel
+    df.to_excel(file_name, index=False)
+
+    print(f"Exported {file_name}")
+
+#%%
+
+def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir):
+    # Set the working directory to the project folder
+    os.chdir(dir)
+
+
+    
+    pct_dx = 1. / pct_steps
+    percentile_list = (np.arange(0, 1 + pct_dx, pct_dx)).tolist()
+    percentile_list[0] = epsilon
+    percentile_list[-1] = 1.0 - epsilon
+    n_groups = 5
+    group_names = ["low", "low-middle", "middle", "middle-high", "high"]
+    idx_group = 6 # 6 means energy, 5 means income
+
+    filename_prefix = f"{run_name}_p{pct_steps}_e{energy_steps}_g{format(gamma, ".3f")}_{datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]}"
+    
+    # make directory for output files
+    if not os.path.exists(filename_prefix):
+        os.makedirs(filename_prefix)
+
+    # Start timing
+    start_time = time.time()
+
+    # Step 1: Prepare country-level data
+
+    country_list = prep_country_level_data(input_data, gamma, epsilon)
+
+    key_variables = create_key_variables(country_list, percentile_list, energy_steps, verbose_level)
+    elapsed_time = time.time() - start_time
+
+    # Print the timing result
+    print(f"Execution time: {elapsed_time:.2f} seconds")
+
+    # Export country level data
+    export_country_list(key_variables["country_list"], filename_prefix, verbose_level)
+
+    # Export per capita and cumulative energy use by percentile for each country
+    export_countries_percentile(input_data, percentile_list, key_variables["per_capita_energy_bdry_country"], key_variables["cum_energy_bdry_country"], filename_prefix, verbose_level)
+
+    # Identify country groups based on per capita income
+    country_groups = find_country_groups_per_capita(input_data, n_groups, idx_group)
+    group_indices = find_country_group_indices(country_groups, key_variables["country_list"])
+
+
+    # Export per capita and cumulative energy use by percentile for each group
+    export_groups_percentile(group_indices, group_names, "energy", input_data, 
+                    percentile_list,
+                    key_variables["per_capita_energy_bdry_country"], 
+                    key_variables["cum_energy_bdry_country"], 
+                    filename_prefix, verbose_level)
+    
+    # Export group population and energy data at different energy levels
+    export_groups_pc_energy(group_indices, group_names, "energy",
+                            key_variables["energy_level_list"], 
+                            key_variables["pop_table"], 
+                            key_variables["energy_table"],
+                            filename_prefix, verbose_level)
+    # Combine energy data and produce aggregated results based on population and energy distribution
+    combined_data = combine_energy_data(key_variables["country_list"], 
+                        key_variables["cum_energy_bdry_country"],
+                        key_variables["per_capita_energy_bdry_country"], 
+                        global_bins_out)
+    # write out combined data
+    export_combined_energy_data(combined_data, filename_prefix)
+
+    # do energy addition and redistribution calculations
+    redist = redistribute(combined_data)
+
+    # write out redistribution data
+    export_redist_energy_data(redist, filename_prefix)
+
+
 def create_key_variables(country_list, percentile_list, n_energy_levels,  verbose_level):
     """
     Processes input data to compute various energy-related tables.
@@ -1314,48 +1429,9 @@ def redistribute(combined_energy_data):
     return np.column_stack((lower_bound, upper_bound, added_energy, freed_energy[::-1]))
 
 
-#-------------------------------------------------------------------------------------------------------------
-
-def export_redist_energy_data(redist, filename_prefix):
-    """
-    Exports redistribution energy data with appropriate headings to an excel file
-    Parameters:
-        redist: numpy.ndarray
-            Redistribution data as a table with columns:
-            - Lower bound
-            - Higher bound
-            - Fraction of global energy supply required
-            - Fraction of global energy supply made available
-        filename_prefix: str
-            Name used in the output file name.
-        run_name: str
-            run_name used in the output file name.
-
-    Returns:
-        None
-    """
-    # Define column headings
-    headings = [
-        "lower bound",
-        "higher bound",
-        "fraction of global energy supply required to bring everyone "
-        "below this level to the upper bound of this level",
-        "fraction of global energy supply made available if everyone "
-        "above this level came down to the per capita energy use of this lower bound"
-    ]
-
-    # Create the output file name
-    file_name = f"./{filename_prefix}/{filename_prefix}_global_redist_various_b{len(redist)}.xlsx"
-
-    df = pd.DataFrame(redist)
-    df.columns = headings
-
-    # Export to excel
-    df.to_excel(file_name, index=False)
-
-    print(f"Exported {file_name}")
 
 #%%
+
 
 # run code
 
@@ -1375,85 +1451,24 @@ if __name__ == "__main__":
     epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
    #--------------------------------------------------------------------------
 
-    # Set the working directory to the project folder
-    os.chdir(dir)
-
-    # Import the Excel file
+       # Import the Excel file
     input_data = pd.read_excel(data_input_file_name, sheet_name=0)
 
     # Get the dimensions of the data frame
     dimensions = input_data.shape
     print(f"Dimensions of the input data: {dimensions}")
-    
-    pct_dx = 1. / pct_steps
-    percentile_list = (np.arange(0, 1 + pct_dx, pct_dx)).tolist()
-    percentile_list[0] = epsilon
-    percentile_list[-1] = 1.0 - epsilon
-    n_groups = 5
-    group_names = ["low", "low-middle", "middle", "middle-high", "high"]
-    idx_group = 6 # 6 means energy, 5 means income
 
-    filename_prefix = f"{run_name}_p{pct_steps}_e{energy_steps}_{datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]}"
-    
-    # make directory for output files
-    if not os.path.exists(filename_prefix):
-        os.makedirs(filename_prefix)
-
-    # Start timing
-    start_time = time.time()
-
-     # Step 0: Compute gamma (global elasticity of energy use)
+    # Step 0: Compute gamma (global elasticity of energy use)
     gamma_res = compute_elasticity_of_energy_use(input_data)
     gamma = gamma_res[0]
     if verbose_level > 0: print(f"Gamma: {gamma}")
 
-    # Step 1: Prepare country-level data
-
-    country_list = prep_country_level_data(input_data, gamma, epsilon)
-
-    key_variables = create_key_variables(country_list, percentile_list, energy_steps, verbose_level)
-    elapsed_time = time.time() - start_time
-
-    # Print the timing result
-    print(f"Execution time: {elapsed_time:.2f} seconds")
-
-    # Export country level data
-    export_country_list(key_variables["country_list"], filename_prefix, verbose_level)
-
-    # Export per capita and cumulative energy use by percentile for each country
-    export_countries_percentile(input_data, percentile_list, key_variables["per_capita_energy_bdry_country"], key_variables["cum_energy_bdry_country"], filename_prefix, verbose_level)
-
-    # Identify country groups based on per capita income
-    country_groups = find_country_groups_per_capita(input_data, n_groups, idx_group)
-    group_indices = find_country_group_indices(country_groups, key_variables["country_list"])
-
-
-    # Export per capita and cumulative energy use by percentile for each group
-    export_groups_percentile(group_indices, group_names, "energy", input_data, 
-                    percentile_list,
-                    key_variables["per_capita_energy_bdry_country"], 
-                    key_variables["cum_energy_bdry_country"], 
-                    filename_prefix, verbose_level)
-    
-    # Export group population and energy data at different energy levels
-    export_groups_pc_energy(group_indices, group_names, "energy",
-                            key_variables["energy_level_list"], 
-                            key_variables["pop_table"], 
-                            key_variables["energy_table"],
-                            filename_prefix, verbose_level)
-    # Combine energy data and produce aggregated results based on population and energy distribution
-    combined_data = combine_energy_data(key_variables["country_list"], 
-                        key_variables["cum_energy_bdry_country"],
-                        key_variables["per_capita_energy_bdry_country"], 
-                        global_bins_out)
-    # write out combined data
-    export_combined_energy_data(combined_data, filename_prefix)
-
-    # do energy addition and redistribution calculations
-    redist = redistribute(combined_data)
-
-    # write out redistribution data
-    export_redist_energy_data(redist, filename_prefix)
+    # within country gamma = between country gamma
+    run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir)
+    # gamma = 0.5
+    run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir)
+    # gamma = 1.0
+    run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir)
 
 # usage:
 # python.exe -i "c:/Users/kcaldeira/My Drive/Edgar distribution/energy_dist.py"
