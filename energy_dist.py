@@ -227,7 +227,10 @@ def prep_country_level_lorenz_data(input_data, gamma):
     # The first element for each country is the spline curve, and the second element is the list of parameters
     # in the list of parameters, the first four elements are the parameters for the Jantzen-Volpert function, with 
     # the first two for the 0 to 20% range and the next two for the 80 to 100% range
-    lorenz_interpolation_list_country = [find_lorenz_interpolation(cum_pop_levels, np.cumsum(row[8:18])) for row in input_data.to_numpy()]
+
+    #   spline_coeffs = [coef for segment in spline.c.T.tolist() for coef in segment]
+    #   return spline,( [p_start, q_start, p_end, q_end] + spline_coeffs )
+    lorenz_interpolation_list_country = [produce_lorenz_interpolation(cum_pop_levels, np.cumsum(row[8:18])) for row in input_data.to_numpy()]
 
     # Step 3: Get country-level population, GDP, and energy data
     pop_list = 1000.0 * input_data.iloc[:, 4].to_numpy()
@@ -240,20 +243,29 @@ def prep_country_level_lorenz_data(input_data, gamma):
     # Because the integral of (d Lincome/dx)^gamma from 0 to 1 is not 1, 
     # we need to compute this integral so we can use it to normalize the energy Lorenz curve so Lenergy(1) = 1.
     # to do this, we first compute the integral of (d Lincome/dx)^gamma from 0 to 1 for each country multiply time 1
-    energy_integral_list = [
-        compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma, 1.0)
-        for spline,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
+    #nergy_integral_list = [
+    #   compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, 1.0)
+    #   for spline_fn,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
 
+    energy_integral_list = []
+    for spline_fn, values in lorenz_interpolation_list_country:
+        p_left, q_left, p_right, q_right, *rest = values  # Unpack properly
+        energy_integral = compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, 1.0)
+        energy_integral_list.append(energy_integral)
+
+    if verbose_level > 1:
+        print("energy integral list: ", energy_integral_list)
+         
     # Step 5: Compute income Gini list
     income_gini_list = [
-        1 - compute_income_lorenz_integral(0.0,1.0,x_data, spline, p_left, q_left, p_right, q_right) / 0.5
-        for spline,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
+        1 - compute_income_lorenz_integral(0.0,1.0,x_data, spline_fn, p_left, q_left, p_right, q_right) / 0.5
+        for spline_fn,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
 
 
    # Step 6: Compute energy Gini list
     energy_gini_list = [
-        1 - compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral_list[idx]) / 0.5
-        for idx,( spline,[ p_left, q_left, p_right, q_right,*rest]) in enumerate( lorenz_interpolation_list_country) ]
+        1 - compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral_list[idx]) / 0.5
+        for idx,( spline_fn,[ p_left, q_left, p_right, q_right,*rest]) in enumerate( lorenz_interpolation_list_country) ]
 
 
     # Step 7: Create country summary table
@@ -295,7 +307,7 @@ def prep_country_level_lorenz_data(input_data, gamma):
         "spline_70_80_2": [item[1][25] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
         "spline_70_80_1": [item[1][26] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
         "spline_70_80_0": [item[1][27] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
-        "spline": [item[0] for item in lorenz_interpolation_list_country]  # Extract spline into its own list
+        "spline_fn": [item[0] for item in lorenz_interpolation_list_country]  # Extract spline into its own list
 
     }
 
@@ -303,7 +315,7 @@ def prep_country_level_lorenz_data(input_data, gamma):
 
 #%% compute values needed to compute energy and income gini indices
 
-def find_lorenz_interpolation(x_data, y_data):
+def produce_lorenz_interpolation(x_data, y_data):
     """
     Process x_data and y_data to fit Jantzen-Volpert function to the first and last pair of points,
     compute derivatives, and fit a cubic spline through the intermediate points.
@@ -319,10 +331,11 @@ def find_lorenz_interpolation(x_data, y_data):
     dy_dx_end = jantzen_volpert_fn_deriv(x_data[-3], p_end, q_end)
     
     # Fit the spline using second to next-to-last points
-    spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-2], y_data[1:-2], dy_dx_start, dy_dx_end)
-    
-    spline_coeffs = [coef for segment in spline.c.T.tolist() for coef in segment]
-    return spline,( [p_start, q_start, p_end, q_end] + spline_coeffs )
+    spline_fn = fit_monotonic_convex_spline_with_derivatives(x_data[1:-2], y_data[1:-2], dy_dx_start, dy_dx_end)
+    print("spline_fn: ", spline_fn.c)
+
+    spline_coeffs = [coef for segment in spline_fn.c.T.tolist() for coef in segment]
+    return spline_fn,( [p_start, q_start, p_end, q_end] + spline_coeffs )
 
 # find jantzen volpert fit going through two points
 
@@ -359,22 +372,22 @@ def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy
     - Uses given first derivatives at the endpoints
     """
     # Fit a cubic spline with first derivative constraints at the endpoints
-    spline = CubicSpline(x_data, y_data, bc_type=((1, dy_dx_start), (1, dy_dx_end)), extrapolate=False)
+    spline_fn = CubicSpline(x_data, y_data, bc_type=((1, dy_dx_start), (1, dy_dx_end)), extrapolate=False)
     
-    return spline
+    return spline_fn
 
 
-def compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral):
+def compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral):
     """
     Integrates f(x)^gamma over [0, 1] where f(x) is defined piecewise:
       - For x in [0, x_data[1]]: f(x) = jantzen_volpert_fn(x, p_left, q_left)
-      - For x in [x_data[1], x_data[-2]]: f(x) = spline(x)
-      - For x in [x_data[-2], 1]: f(x) = jantzen_volpert_fn(x, p_right, q_right)
+      - For x in [x_data[1], x_data[-3]: f(x) = spline_fn(x)
+      - For x in [x_data[-3, 1]: f(x) = jantzen_volpert_fn(x, p_right, q_right)
       
     Parameters:
         x_data : array-like
             Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
-        spline : CubicSpline
+        spline_fn : CubicSpline
             The fitted spline function for the middle segment.
         p_left, q_left : float
             Parameters for the analytic function on the left segment.
@@ -384,26 +397,31 @@ def compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_ri
             The exponent to which f(x) is raised.
             
     Returns:
-        total_integral : float
+        total_integral : float 
             The numerical value of the integral of f(x)^gamma from 0 to 1.
     """
     # Integrate the left analytic segment from 0 to x_data[1]:
     integral_left, _ = quad(lambda x: jantzen_volpert_fn(x, p_left, q_left)**gamma,
                             0, x_data[1])
-    
-    # Integrate the middle spline segment numerically from x_data[1] to x_data[-2]:
-    integral_middle, _ = quad(lambda x: spline(x)**gamma, x_data[1], x_data[-2])
-    
-    # Integrate the right analytic segment from x_data[-2] to 1:
+    print ("spline_fn(0.25), spline_fn(0.5, spline_fn(0.75): ", spline_fn(0.25), spline_fn(0.5), spline_fn(0.75))
+    print ("x_data[1], x_data[-3: ", x_data[1], x_data[-3]
+    # Integrate the middle spline segment numerically from x_data[1] to x_data[3]: 20% to 80%
+    integral_middle, error = quad(lambda x: spline_fn(x)**gamma, x_data[1], x_data[-3])
+    print("integral_middle, error: ", integral_middle, error)
+
+
+    # Integrate the right analytic segment from x_data[-] to 1:
     integral_right, _ = quad(lambda x: jantzen_volpert_fn(x, p_right, q_right)**gamma,
-                             x_data[-2], 1)
+                             x_data[-3],1)
     
     # Sum the three pieces to get the total integral:
     total_integral = integral_left + integral_middle + integral_right
+    print("integral_left, integral_middle, integral_right, total_integral: ", integral_left, integral_middle, integral_right, total_integral)
+    print("energy_integral: ", energy_integral)
     return total_integral / energy_integral
 
 
-def compute_income_lorenz_integral(x0,x1,x_data, spline, p_left, q_left, p_right, q_right):
+def compute_income_lorenz_integral(x0,x1,x_data, spline_fn, p_left, q_left, p_right, q_right):
     # Integrate the spline function with jantzen volpert ends from x0 to x1
     # assumeing x1 > x0
 
@@ -420,7 +438,7 @@ def compute_income_lorenz_integral(x0,x1,x_data, spline, p_left, q_left, p_right
     
     # Integrate the middle spline segment using its antiderivative.
     if x0 <= x_data[-3] and x1 > x_data[1]:
-        integral_middle = spline.integrate(max(x0,x_data[1]),min( x1,x_data[-3])) # i.e., max(x0, 20%) to min(x1, 80%)
+        integral_middle = spline_fn.integrate(max(x0,x_data[1]),min( x1,x_data[-3])) # i.e., max(x0, 20%) to min(x1, 80%)
     else:
         integral_middle = 0.0
     
@@ -548,7 +566,7 @@ def gen_country_summary_datas_by_fract_of_pop(country_summary_data, percentile_l
 
     x_data = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0] # upper bounds of income distribution categoris
     # Generate per capita energy use by population percentile
-    # energy_per_capita_fn(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, pop, energy)
+    # energy_per_capita_fn(x, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, pop, energy)
     per_capita_energy_bdry_country = np.array([
         [
             energy_per_capita_fn(
@@ -574,13 +592,18 @@ def gen_country_summary_datas_by_fract_of_pop(country_summary_data, percentile_l
     # integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline, 
     # #        p_left, q_left, p_right, q_right, gamma, energy, energy_integral):
 
-    cum_energy_bdry_country = np.array([
-        np.cumsum([
+    cum_energy_bdry_country = []
+
+    for idx_country in range(len(country_summary_data["Population"])):
+        if verbose_level > 1:
+            print(f"Processing country index: {idx_country}")  # Your print statement
+
+        country_cumulative_energy = np.cumsum([
             integrate_energy_in_pop_pctile_range(
                 percentile_list[max(0, i - 1)],
                 percentile_list[i],
                 x_data,
-                country_summary_data["spline"][idx_country], 
+                country_summary_data["spline_fn"][idx_country], 
                 country_summary_data["Pleft"][idx_country], 
                 country_summary_data["Qleft"][idx_country],
                 country_summary_data["Pright"][idx_country], 
@@ -591,15 +614,17 @@ def gen_country_summary_datas_by_fract_of_pop(country_summary_data, percentile_l
             )
             for i in range(len(percentile_list))
         ])
-        for idx_country in range(len(country_summary_data["Population"]))
-        ])
+
+        cum_energy_bdry_country.append(country_cumulative_energy)
+
+    cum_energy_bdry_country = np.array(cum_energy_bdry_country)
 
     if verbose_level > 0:
         print("Completed generating energy use lists.")
 
     return per_capita_energy_bdry_country, cum_energy_bdry_country
 
-def energy_per_capita_fn(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy, pop, energy_integral):
+def energy_per_capita_fn(x, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy, pop, energy_integral):
     """
     Computes the energy per capita usage levels for a country based on the given parameters.
 
@@ -607,7 +632,7 @@ def energy_per_capita_fn(x, x_data, spline, p_left, q_left, p_right, q_right, ga
         x: float
             A scalar value, must be numeric.
         x_data: list of upper bound of income levels
-        spline: result of CubicSpline fit (for middle of income lorenz curve)
+        spline_fn: result of CubicSpline fit (for middle of income lorenz curve)
         p_left, q_left: floats
             Parametersfor the left segment of the Lorenz curve.
         gamma: float
@@ -623,18 +648,18 @@ def energy_per_capita_fn(x, x_data, spline, p_left, q_left, p_right, q_right, ga
     """
 
     # Compute the derivative of energy use with respect to x (population percentile)
-    deriv = compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral)
+    deriv = compute_d_energy_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral)
 
     # return derivative times mean country level energy use
     return deriv * energy / pop
 
-def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral):
+def compute_d_energy_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral):
     """
     Computes the derivative of f(x)^gamma with respect to x for 0 <= x <= 1, where f(x) is defined piecewise as:
       - For x in [0, x_data[1]]:
             f(x) = jantzen_volpert_fn(x, p_left, q_left)
       - For x in [x_data[1], x_data[-2]]:
-            f(x) = spline(x)
+            f(x) = spline_fn(x)
       - For x in [x_data[-2], 1]:
             f(x) = jantzen_volpert_fn(x, p_right, q_right)
     
@@ -647,7 +672,7 @@ def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_rig
             The point at which to evaluate the derivative.
         x_data : array-like
             Array of x-values spanning [0, 1].
-        spline : CubicSpline
+        spline_fn : CubicSpline
             The fitted spline function for the middle segment.
         p_left, q_left : float
             Parameters for the analytic function on the left segment.
@@ -665,8 +690,8 @@ def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_rig
         f_val = jantzen_volpert_fn(x, p_left, q_left)
         f_prime = jantzen_volpert_fn_deriv(x, p_left, q_left)
     elif x < x_data[-2]:
-        f_val = spline(x)
-        f_prime = spline.derivative()(x)
+        f_val = spline_fn(x)
+        f_prime = spline_fn.derivative()(x)
     else:
         f_val = jantzen_volpert_fn(x, p_right, q_right)
         f_prime = jantzen_volpert_fn_deriv(x, p_right, q_right)
@@ -674,14 +699,14 @@ def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_rig
     return gamma * f_val**(gamma - 1) * f_prime / energy_integral
 
 
-def compute_d_income_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right):
+def compute_d_income_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_right):
     """
     Computes the derivative of the piecewise function f(x) at a given x, where f(x)
     is defined as:
       - For x in [0, x_data[1]]:
             f(x) = jantzen_volpert_fn(x, p_left, q_left)
       - For x in [x_data[1], x_data[-2]]:
-            f(x) = spline(x)
+            f(x) = spline_fn(x)
       - For x in [x_data[-2], 1]:
             f(x) = jantzen_volpert_fn(x, p_right, q_right)
             
@@ -690,7 +715,7 @@ def compute_d_income_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_rig
             The point at which the derivative is evaluated.
         x_data : array-like
             Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
-        spline : CubicSpline
+        spline_fn : CubicSpline
             The fitted spline function for the middle segment.
         p_left, q_left : float
             Parameters for the analytic function on the left segment.
@@ -708,39 +733,35 @@ def compute_d_income_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_rig
     # Middle spline segment: x_data[1] < x < x_data[-2]
     elif x < x_data[-2]:
         # Compute the derivative using the spline's derivative.
-        return spline.derivative()(x)
+        return spline_fn.derivative()(x)
     
     # Right analytic segment: x_data[-2] <= x <= 1
     else:
         return jantzen_volpert_fn_deriv(x, p_right, q_right)
     
-def integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy, energy_integral):
+def integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy, energy_integral):
     """
     Integrates compute_d_energy_lorenz_dx from x0 to x1.
     
     Parameters:
         x0, x1 : float
             The integration bounds.
-        x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral : parameters
+        x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral : parameters
             Same as those used in compute_d_energy_lorenz_dx.
     
     Returns:
         float
             The integral of d(energy_lorenz)/dx from x0 to x1.
     """
-    
+    #print ("x0, x1", x0, x1,
+    #       "p_left, q_left, p_right, q_right, gamma, energy, energy_integral", 
+    #       p_left, q_left, p_right, q_right, gamma, energy, energy_integral)
     def integrand(x):
-        return compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral)
+        return compute_d_energy_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral)
     
     result, error = quad(integrand, x0, x1)
     return energy * result
 
-
-
-
-
-
-#----------------------------------------------------------------------------------------------------
 
 def jantzen_volpert_fn_deriv(x, p, q):
     term1 = p * x**(p - 1) * (1 - (1 - x)**q)
@@ -822,49 +843,6 @@ def energy_in_country_to_fract_pop_level(cum_energy_bdry_country, pct_list, pop_
         energy_table.append(mapped_values)
     
     return np.array(energy_table)
-#-------------------------------------------------------------------------------------------------------------
-
-def integral_income_lorenz(p, q):
-    """
-    Computes the integral of the income Lorenz curve.
-
-    Parameters:
-        p: float
-            Parameter p of the Lorenz curve.
-        q: float
-            Parameter q of the Lorenz curve.
-
-    Returns:
-        float
-            The result of the Lorenz curve integral.
-    """
-    return 1 / (1 + p) - (math.gamma(1 + p) * math.gamma(1 + q)) / math.gamma(2 + p + q)
-
-
-#-------------------------------------------------------------------------------------------------------------
-
-"""
-Note that the underlying Lorenz curve for cumulative fraction of income as a cumulative fraction of population in the Jantzen and Volpert (2013) approach is:
-
-L[x] == x^p ( 1 - (1-x)^q)
-
-If pop is the country population and gdp is total income for the population, the per capita income <incomePerCapita> at population fraction x is
-
-incomePerCapita[x] == (gdp / pop) * d L[x] / d x = p (1-(1-x)^q) x^(-1+p)+q (1-x)^(-1+q) x^p
-
-if energy is country total energy use and gamma is the elasticity of energy use with population, we can define the variable <energyIntegral>
-
-energyIntegral = Integral[ (p (1-(1-x)^q) x^(-1+p)+q (1-x)^(-1+q) x^p)^gamma, {x, 0 1}]
-
-then per capita energy use <energyPerCapita> at population fraction x is:
-
-energyPerCapita[x] == (energy / pop) (p (1-(1-x)^q) x^(-1+p)+q (1-x)^(-1+q) x^p)^gamma  / integral
-
-and cumulative energy to population fraction x is
-
-energyCumulative[x] ==  energy * Integral[ (p (1-(1-x0)^q) x0^(-1+p)+q (1-x0)^(-1+q) x0^p)^gamma, {x0, 0 1}] / integral
-
-"""
 
 #%%
 # Code to summarize key variables and output as xlsx files
