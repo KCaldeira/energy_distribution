@@ -20,13 +20,18 @@ import time
 import platform, os
 from scipy.special import beta as beta_func, betainc
 
-#%% main processing code
+#%% compute country-level elasticity of energy use
 
-#-------------------------------------------------------------------------------------------------------------
 
 def compute_elasticity_of_energy_use(input_data):
     """
     Computes the elasticity of energy use based on input data.
+
+    This elasticity is computed at country-level by doing a population-weighted least-squares linear regression
+    of the log of mean country-level per-capita energy use as a function of the log of mean 
+    country-level per-capita GDP, subject to the constraint that the sum of the product of population
+    and per-capita gdp raised to the gamma parameter is equal to global energy use, where gamma is
+    the slope of that linear regression.
 
     Parameters:
         input_data: pandas.DataFrame
@@ -101,55 +106,32 @@ def fit_population_weighted(pop, per_capita_energy, per_capita_gdp):
     
     return a_best, b_best, R2
 
-#-------------------------------------------------------------------------------------------------------------
 
-def export_redist_energy_data(redist, filename_prefix):
+#%% Main code to compute energy distribution analysis
+
+def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp):
+
     """
-    Exports redistribution energy data with appropriate headings to an excel file
-    Parameters:
-        redist: numpy.ndarray
-            Redistribution data as a table with columns:
-            - Lower bound
-            - Higher bound
-            - Fraction of global energy supply required
-            - Fraction of global energy supply made available
-        filename_prefix: str
-            Name used in the output file name.
-        run_name: str
-            run_name used in the output file name.
+    Do the main energy distribution analysis for the given input data and gamma value (i.e., elastcity of energy use).
 
-    Returns:
-        None
+    pct_steps and energy_steps are numbers of buckets to use in the numerical methods. These should be as high as possible
+    such that decreasing a bit does not change the numbers to the precision that will be displayed.
+
+    Try numbers like 10,000 or 1000.
+
+    epsilon is a small number to avoid division by zero. It should be a small number like 1e-12.
+
+    verbose_level is an integer that controls the amount of output. 0 is no output, 1 is some output, 2 is more output.
+
+    run_name is a string that will be used to name the output files.
+
+    dir is the parent directory of where the output files will be written.
+
+    date_stamp is a string that will be used to name the output files and output subdirectory.
     """
-    # Define column headings
-    headings = [
-        "lower bound",
-        "higher bound",
-        "fraction of global energy supply required to bring everyone "
-        "below this level to the upper bound of this level",
-        "fraction of global energy supply made available if everyone "
-        "above this level came down to the per capita energy use of this lower bound"
-    ]
-
-    # Create the output file name
-    file_name = f"./{filename_prefix}/{filename_prefix}_global_redist_various_b{len(redist)}.xlsx"
-
-    df = pd.DataFrame(redist)
-    df.columns = headings
-
-    # Export to excel
-    df.to_excel(file_name, index=False)
-
-    print(f"Exported {file_name}")
-
-#%%
-
-def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir):
     # Set the working directory to the project folder
     os.chdir(dir)
 
-
-    
     pct_dx = 1. / pct_steps
     percentile_list = (np.arange(0, 1 + pct_dx, pct_dx)).tolist()
     percentile_list[0] = epsilon
@@ -158,7 +140,7 @@ def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out,
     group_names = ["low", "low-middle", "middle", "middle-high", "high"]
     idx_group = 6 # 6 means energy, 5 means income
 
-    filename_prefix = f"{run_name}_p{pct_steps}_e{energy_steps}_g{format(gamma, ".3f")}_{datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]}"
+    filename_prefix = f"{run_name}_p{pct_steps}_e{energy_steps}_g{gamma:.3f}_{date_stamp}"
     
     # make directory for output files
     if not os.path.exists(filename_prefix):
@@ -169,24 +151,26 @@ def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out,
 
     # Step 1: Prepare country-level data
 
-    country_list = prep_country_level_data(input_data, gamma, epsilon)
+    country_summary_data = prep_country_level_lorenz_data(input_data, gamma)
 
-    key_variables = create_key_variables(country_list, percentile_list, energy_steps, verbose_level)
+    key_variables = compute_key_country_level_parameters(country_summary_data, percentile_list, energy_steps, verbose_level)
     elapsed_time = time.time() - start_time
 
     # Print the timing result
     print(f"Execution time: {elapsed_time:.2f} seconds")
 
     # Export country level data
-    export_country_list(key_variables["country_list"], filename_prefix, verbose_level)
+    export_country_summary_data(key_variables["country_summary_data"], filename_prefix, verbose_level)
 
     # Export per capita and cumulative energy use by percentile for each country
     export_countries_percentile(input_data, percentile_list, key_variables["per_capita_energy_bdry_country"], key_variables["cum_energy_bdry_country"], filename_prefix, verbose_level)
 
     # Identify country groups based on per capita income
     country_groups = find_country_groups_per_capita(input_data, n_groups, idx_group)
-    group_indices = find_country_group_indices(country_groups, key_variables["country_list"])
+    group_indices = find_country_group_indices(country_groups, key_variables["country_summary_data"])
 
+    # export country group information
+    export_country_group_table(input_data, country_groups, group_names, filename_prefix, verbose_level)
 
     # Export per capita and cumulative energy use by percentile for each group
     export_groups_percentile(group_indices, group_names, "energy", input_data, 
@@ -202,7 +186,7 @@ def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out,
                             key_variables["energy_table"],
                             filename_prefix, verbose_level)
     # Combine energy data and produce aggregated results based on population and energy distribution
-    combined_data = combine_energy_data(key_variables["country_list"], 
+    combined_data = combine_energy_data(key_variables["country_summary_data"], 
                         key_variables["cum_energy_bdry_country"],
                         key_variables["per_capita_energy_bdry_country"], 
                         global_bins_out)
@@ -216,68 +200,9 @@ def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out,
     export_redist_energy_data(redist, filename_prefix)
 
 
-def create_key_variables(country_list, percentile_list, n_energy_levels,  verbose_level):
-    """
-    Processes input data to compute various energy-related tables.
-    
-    Parameters:
-        input_data: str
-            Path to the Excel file containing country-level data.
-        percentile_list: list
-            List of percentiles (e.g., np.arange(0, 1.01, 0.01)).
-        n_energy_levels: int
-            Number of energy levels to compute.
-        verbose_level: int
-            Level of verbosity for print statements.
-    Returns:
-        dict
-            A dictionary containing calculated tables and lists.
-    """
+#%% prepare country level data, including income distribution interpolation and gini indices
 
-    if verbose_level > 0:
-        print(f"Generating list by country and percentile of population; {datetime.now()}")
-
-    # Step 2: Generate per capita energy boundaries by country
-    per_capita_energy_bdry_country, cum_energy_bdry_country = gen_country_lists_by_fract_of_pop(
-        country_list, percentile_list,epsilon, verbose_level
-    )
-
-    # Step 3: Create master table of evenly spaced energy levels
-    if verbose_level > 0:
-        print("Generating list by country and energy use level")
-    energy_level_list = np.logspace(-2, 3, num=n_energy_levels).tolist()
-
-    # Step 4: Compute fraction of population for energy levels
-    if verbose_level > 0:
-        print(f"Computing fractPopTable; {datetime.now()}")
-    fract_pop_table = fract_pop_in_country_to_energy_per_capita_level(
-        per_capita_energy_bdry_country, percentile_list, energy_level_list
-    )
-
-    # Step 5: Compute population by energy level
-    pop_table = np.array(country_list["Population"])[:, np.newaxis] * fract_pop_table
-
-    # Step 6: Compute cumulative energy use by energy level
-    if verbose_level > 0:
-        print(f"Computing energyTable; {datetime.now()}")
-    energy_table = energy_in_country_to_fract_pop_level(
-        cum_energy_bdry_country, percentile_list, fract_pop_table
-    )
-
-    # Return the results in a dictionary
-    return {
-        "country_list":country_list,
-        "per_capita_energy_bdry_country": per_capita_energy_bdry_country,
-        "cum_energy_bdry_country": cum_energy_bdry_country,
-        "energy_level_list": energy_level_list,
-        "fract_pop_table": fract_pop_table,
-        "pop_table": pop_table,
-        "energy_table": energy_table
-    }
-
-#----------------------------------------------------------------------------------------------
-
-def prep_country_level_data(input_data, gamma, epsilon):
+def prep_country_level_lorenz_data(input_data, gamma):
     """
     Prepares country-level data by computing parameters like gamma, Lorenz curve fits,
     and Gini coefficients for income and energy distribution.
@@ -299,6 +224,9 @@ def prep_country_level_data(input_data, gamma, epsilon):
     cum_pop_levels = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]
 
     # Step 2: Compute country-level parameters for fits to income Lorenz curve
+    # The first element for each country is the spline curve, and the second element is the list of parameters
+    # in the list of parameters, the first four elements are the parameters for the Jantzen-Volpert function, with 
+    # the first two for the 0 to 20% range and the next two for the 80 to 100% range
     lorenz_interpolation_list_country = [find_lorenz_interpolation(cum_pop_levels, np.cumsum(row[8:18])) for row in input_data.to_numpy()]
 
     # Step 3: Get country-level population, GDP, and energy data
@@ -306,45 +234,74 @@ def prep_country_level_data(input_data, gamma, epsilon):
     gdp_list = input_data.iloc[:, 5].to_numpy()
     energy_list = (10**9 / (8760 * 3600)) * input_data.iloc[:, 6].to_numpy()
 
+    x_data = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0] # upper bins for income distribution data
+
     # Step 4: Compute integral list for energy Lorenz bin
-    integral_list = [
-        energy_in_lorenz_range(0., 1.-epsilon, rmspq[1], rmspq[2], gamma, 1, 1, epsilon)
-        for rmspq in lorenz_interpolation_list_country
-    ]
+    # Because the integral of (d Lincome/dx)^gamma from 0 to 1 is not 1, 
+    # we need to compute this integral so we can use it to normalize the energy Lorenz curve so Lenergy(1) = 1.
+    # to do this, we first compute the integral of (d Lincome/dx)^gamma from 0 to 1 for each country multiply time 1
+    energy_integral_list = [
+        compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma, 1.0)
+        for spline,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
 
     # Step 5: Compute income Gini list
     income_gini_list = [
-        1 - integral_income_lorenz(rmspq[1], rmspq[2]) / 0.5
-        for rmspq in lorenz_interpolation_list_country
-    ]
+        1 - compute_income_lorenz_integral(0.0,1.0,x_data, spline, p_left, q_left, p_right, q_right) / 0.5
+        for spline,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
+
 
    # Step 6: Compute energy Gini list
     energy_gini_list = [
-        1 - integral_energy_lorenz(lorenz_interpolation_list_country[idx][1], lorenz_interpolation_list_country[idx][2], gamma, 1, integral_list[idx],epsilon) / 0.5
-        for idx  in range(len(lorenz_interpolation_list_country))
-    ]
+        1 - compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral_list[idx]) / 0.5
+        for idx,( spline,[ p_left, q_left, p_right, q_right,*rest]) in enumerate( lorenz_interpolation_list_country) ]
 
 
     # Step 7: Create country summary table
     country_summary_data = {
         "Country Name": input_data.iloc[:, 1].to_numpy().tolist(),
         "Country Code": input_data.iloc[:, 2].to_numpy().tolist(),
-        "RMS": [rmspq[0] for rmspq in lorenz_interpolation_list_country],
-        "P": [rmspq[1] for rmspq in lorenz_interpolation_list_country],  # Extract P (pp) into its own list
-        "Q": [rmspq[2] for rmspq in lorenz_interpolation_list_country],  # Extract Q (qq) into its own list
         "Population": pop_list.tolist(),
         "GDP": gdp_list.tolist(),
         "Energy": energy_list.tolist(),
         "Gamma": [gamma] * len(pop_list),
-        "Integral": integral_list,
+        "Energy Integral": energy_integral_list,
         "Income Gini": income_gini_list,
         "Energy Gini": energy_gini_list,
-    }
+        "Pleft": [item[1][0] for item in lorenz_interpolation_list_country],  # Extract Pleft into its own list
+        "Qleft": [item[1][1] for item in lorenz_interpolation_list_country],  # Extract Qleft into its own list
+        "Pright": [item[1][2] for item in lorenz_interpolation_list_country],  # Extract Pright into its own list
+        "Qright": [item[1][3] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_20_30_3": [item[1][4] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_20_30_2": [item[1][5] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_20_30_1": [item[1][6] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_20_30_0": [item[1][7] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_30_40_3": [item[1][8] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_30_40_2": [item[1][9] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_30_40_1": [item[1][10] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_30_40_0": [item[1][11] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_40_50_3": [item[1][12] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_40_50_2": [item[1][13] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_40_50_1": [item[1][14] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_40_50_0": [item[1][15] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_50_60_3": [item[1][16] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_50_60_2": [item[1][17] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_50_60_1": [item[1][18] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_50_60_0": [item[1][19] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_60_70_3": [item[1][20] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_60_70_2": [item[1][21] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_60_70_1": [item[1][22] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_60_70_0": [item[1][23] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_70_80_3": [item[1][24] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_70_80_2": [item[1][25] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_70_80_1": [item[1][26] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline_70_80_0": [item[1][27] for item in lorenz_interpolation_list_country],  # Extract Qright into its own list
+        "spline": [item[0] for item in lorenz_interpolation_list_country]  # Extract spline into its own list
 
+    }
 
     return country_summary_data
 
-#-----------------------------------------
+#%% compute values needed to compute energy and income gini indices
 
 def find_lorenz_interpolation(x_data, y_data):
     """
@@ -364,46 +321,10 @@ def find_lorenz_interpolation(x_data, y_data):
     # Fit the spline using second to next-to-last points
     spline = fit_monotonic_convex_spline_with_derivatives(x_data[1:-2], y_data[1:-2], dy_dx_start, dy_dx_end)
     
-    return spline, p_start, q_start, p_end, q_end
+    spline_coeffs = [coef for segment in spline.c.T.tolist() for coef in segment]
+    return spline,( [p_start, q_start, p_end, q_end] + spline_coeffs )
 
-#----------------------------------------------------------------------------------------------------
-#-----------CODE TO DO COUNTRY LEVEL FITS -----------------------------------------------------------
-#----------------------------------------------------------------------------------------------------
 # find jantzen volpert fit going through two points
-
-
-def jantzen_volpert_fn(x, p, q):
-    return x**p * (1 - (1 - x)**q)
-
-def jantzen_volpert_fn_deriv(x, p, q):
-    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
-    term2 = x**p * q * (1 - x)**(q - 1)
-    return term1 + term2
-
-def jantzen_volpert_fn_integral(x0, x1, p, q):
-    """
-    Computes:
-      ((-x0^(1+p) + x1^(1+p))/(1+p) + Beta[x0, 1+p, 1+q] - Beta[x1, 1+p, 1+q])
-    with the condition that x1 < 1 and x0 > 0.
-    
-    Here, Beta[x, a, b] is the (lower) incomplete beta function:
-      Beta[x, a, b] = int_0^x t^(a-1) * (1-t)^(b-1) dt.
-      
-    In SciPy, betainc(a, b, x) returns the regularized incomplete beta function I_x(a,b),
-    so we multiply by beta(a, b) to get the unregularized value.
-    """
-    # Compute the first term
-    term1 = (-x0**(1+p) + x1**(1+p)) / (1+p)
-
-    # Compute the unregularized incomplete beta functions for x0 and x1.
-    # Note: In SciPy, the lower incomplete beta is computed as:
-    #       B_x(a,b) = betainc(a, b, x) * beta(a, b)
-    a = 1 + p
-    b = 1 + q
-    incomplete_beta_x0 = betainc(a, b, x0) * beta_func(a, b)
-    incomplete_beta_x1 = betainc(a, b, x1) * beta_func(a, b)
-
-    return term1 + incomplete_beta_x0 - incomplete_beta_x1
 
 def find_jantzen_volpert_p_q(x0, y0, x1, y1):
     # Initial guess for p and q
@@ -425,6 +346,11 @@ p, q = find_p_q(x0, y0, x1, y1)
 print(f"Estimated p: {p}, Estimated q: {q}")
 """
 
+
+def jantzen_volpert_fn(x, p, q):
+    return x**p * (1 - (1 - x)**q)
+
+
 def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy_dx_end):
     """
     Fits a cubic spline ensuring:
@@ -438,25 +364,7 @@ def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy
     return spline
 
 
-
-def compute_income_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right):
-    
-    # Integrate the left analytic segment from 0 to x_data[1].
-    integral_left = jantzen_volpert_fn_integral(0, x_data[1],p_left, q_left)
-    
-    # Integrate the middle spline segment using its antiderivative.
-    spline_antideriv = spline.antiderivative()
-    integral_middle = spline_antideriv(x_data[-2]) - spline_antideriv(x_data[1])
-    
-    # Integrate the right analytic segment from x_data[-2] to 1.
-    integral_right =  jantzen_volpert_fn_integral(x_data[-2], 1, p_right, q_right)
-    
-    # Sum the three pieces to get the total integral.
-    total_integral = integral_left + integral_middle + integral_right
-
-    return total_integral
-
-def compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma):
+def compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral):
     """
     Integrates f(x)^gamma over [0, 1] where f(x) is defined piecewise:
       - For x in [0, x_data[1]]: f(x) = jantzen_volpert_fn(x, p_left, q_left)
@@ -492,49 +400,235 @@ def compute_energy_lorenz_integral(x_data, spline, p_left, q_left, p_right, q_ri
     
     # Sum the three pieces to get the total integral:
     total_integral = integral_left + integral_middle + integral_right
+    return total_integral / energy_integral
+
+
+def compute_income_lorenz_integral(x0,x1,x_data, spline, p_left, q_left, p_right, q_right):
+    # Integrate the spline function with jantzen volpert ends from x0 to x1
+    # assumeing x1 > x0
+
+    # x_data are the x data values for the upper end of the income bins
+
+    integral = 0.0
+    
+    # Integrate the left analytic segment from 0 to x_data[1].
+    if x0 <= x_data[1]: # i.e., if x0 < x_data[1] (i.e., 20%)
+        integral_left = jantzen_volpert_fn_integral(x0, min(x1,x_data[1]), p_left, q_left)
+    else:
+        integral_left = 0.0
+
+    
+    # Integrate the middle spline segment using its antiderivative.
+    if x0 <= x_data[-3] and x1 > x_data[1]:
+        integral_middle = spline.integrate(max(x0,x_data[1]),min( x1,x_data[-3])) # i.e., max(x0, 20%) to min(x1, 80%)
+    else:
+        integral_middle = 0.0
+    
+    # Integrate the right analytic segment from x_data[-2] to 1.
+    if x1 >= x_data[-3]: # i.e., if x1 > x_data[-2] (i.e., 80%)
+        integral_right = jantzen_volpert_fn_integral(max(x0,x_data[-3]), x1, p_right, q_right)
+    else:
+        integral_right = 0.0
+    
+    # Sum the three pieces to get the total integral.
+    total_integral = integral_left + integral_middle + integral_right
+
     return total_integral
 
-def compute_d_income_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right):
+
+def jantzen_volpert_fn_integral(x0, x1, p, q):
     """
-    Computes the derivative of the piecewise function f(x) at a given x, where f(x)
-    is defined as:
-      - For x in [0, x_data[1]]:
-            f(x) = jantzen_volpert_fn(x, p_left, q_left)
-      - For x in [x_data[1], x_data[-2]]:
-            f(x) = spline(x)
-      - For x in [x_data[-2], 1]:
-            f(x) = jantzen_volpert_fn(x, p_right, q_right)
-            
+    Computes:
+      ((-x0^(1+p) + x1^(1+p))/(1+p) + Beta[x0, 1+p, 1+q] - Beta[x1, 1+p, 1+q])
+    with the condition that x1 < 1 and x0 > 0.
+    
+    Here, Beta[x, a, b] is the (lower) incomplete beta function:
+      Beta[x, a, b] = int_0^x t^(a-1) * (1-t)^(b-1) dt.
+      
+    In SciPy, betainc(a, b, x) returns the regularized incomplete beta function I_x(a,b),
+    so we multiply by beta(a, b) to get the unregularized value.
+    """
+    # Compute the first term
+    term1 = (-x0**(1+p) + x1**(1+p)) / (1+p)
+
+    # Compute the unregularized incomplete beta functions for x0 and x1.
+    # Note: In SciPy, the lower incomplete beta is computed as:
+    #       B_x(a,b) = betainc(a, b, x) * beta(a, b)
+    a = 1 + p
+    b = 1 + q
+    incomplete_beta_x0 = betainc(a, b, x0) * beta_func(a, b)
+    incomplete_beta_x1 = betainc(a, b, x1) * beta_func(a, b)
+
+    return term1 + incomplete_beta_x0 - incomplete_beta_x1
+
+
+#%% Create key country level intemediate values by population percentile needed to aggregate across countries
+
+def compute_key_country_level_parameters(country_summary_data, percentile_list, n_energy_levels,  verbose_level):
+    """
+    Processes input data to compute various energy-related tables by country and percentile of population.
+    
     Parameters:
-        x : float
-            The point at which the derivative is evaluated.
-        x_data : array-like
-            Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
-        spline : CubicSpline
-            The fitted spline function for the middle segment.
-        p_left, q_left : float
-            Parameters for the analytic function on the left segment.
-        p_right, q_right : float
-            Parameters for the analytic function on the right segment.
-            
+        input_data: str
+            Path to the Excel file containing country-level data.
+        percentile_list: list
+            List of percentiles (e.g., np.arange(0, 1.01, 0.01)).
+        n_energy_levels: int
+            Number of energy levels to compute.
+        verbose_level: int
+            Level of verbosity for print statements.
+    Returns:
+        dict
+            A dictionary containing calculated tables and lists.
+    """
+
+    if verbose_level > 0:
+        print(f"Generating list by country and percentile of population; {datetime.now()}")
+
+    # Step 2: Generate per capita energy boundaries by country
+    per_capita_energy_bdry_country, cum_energy_bdry_country = gen_country_summary_datas_by_fract_of_pop(
+        country_summary_data, percentile_list,epsilon, verbose_level
+    )
+
+    # Step 3: Create master table of evenly spaced energy levels
+    if verbose_level > 0:
+        print("Generating list by country and energy use level")
+    energy_level_list = np.logspace(-2, 3, num=n_energy_levels).tolist()
+
+    # Step 4: Compute fraction of population by country and energy level
+    if verbose_level > 0:
+        print(f"Computing fractPopTable; {datetime.now()}")
+    fract_pop_table = fract_pop_in_country_to_energy_per_capita_level(
+        per_capita_energy_bdry_country, percentile_list, energy_level_list
+    )
+
+    # Step 5: Compute population by country and energy level
+    pop_table = np.array(country_summary_data["Population"])[:, np.newaxis] * fract_pop_table
+
+    # Step 6: Compute cumulative energy by country and population level
+    if verbose_level > 0:
+        print(f"Computing energyTable; {datetime.now()}")
+    energy_table = energy_in_country_to_fract_pop_level(
+        cum_energy_bdry_country, percentile_list, fract_pop_table
+    )
+
+    # Return the results in a dictionary
+    return {
+        "country_summary_data":country_summary_data,
+        "per_capita_energy_bdry_country": per_capita_energy_bdry_country,
+        "cum_energy_bdry_country": cum_energy_bdry_country,
+        "energy_level_list": energy_level_list,
+        "fract_pop_table": fract_pop_table,
+        "pop_table": pop_table,
+        "energy_table": energy_table
+    }
+
+
+def gen_country_summary_datas_by_fract_of_pop(country_summary_data, percentile_list, epsilon, verbose_level):
+    """
+    Generates lists of per capita energy use and cumulative energy use
+    by population percentile for each country.
+
+    Parameters:
+        country_summary_data: dict
+            The dictionary containing country-level data.
+        percentile_list: list
+            A list of percentiles (e.g., np.arange(0, 1.01, 0.01)).
+        filename_prefix: str
+            Name to be used in output (not used directly here but passed).
+        verbose_level: int
+            Level of verbosity for print statements.
+
+    
+            - per_capita_energy_bdry_country: numpy array of per capita energy use.
+            - cum_energy_bdry_country: numpy of cumulative energy use.
+    """
+    if verbose_level > 0:
+        print("Generating lists of per capita and cumulative energy use by population percentile...")
+
+    x_data = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0] # upper bounds of income distribution categoris
+    # Generate per capita energy use by population percentile
+    # energy_per_capita_fn(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, pop, energy)
+    per_capita_energy_bdry_country = np.array([
+        [
+            energy_per_capita_fn(
+                x, 
+                x_data,
+                country_summary_data["spline"][idx_country], 
+                country_summary_data["Pleft"][idx_country], 
+                country_summary_data["Qleft"][idx_country],
+                country_summary_data["Pright"][idx_country], 
+                country_summary_data["Qright"][idx_country], 
+                country_summary_data["Gamma"][idx_country], 
+                country_summary_data["Population"][idx_country], 
+                country_summary_data["Energy"][idx_country],
+                country_summary_data["Energy Integral"][idx_country]
+            )
+            for x in percentile_list
+        ]
+        for idx_country in range(len(country_summary_data["Population"]))
+        ])
+
+
+    # Generate cumulative energy use by population percentile
+    # integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline, 
+    # #        p_left, q_left, p_right, q_right, gamma, energy, energy_integral):
+
+    cum_energy_bdry_country = np.array([
+        np.cumsum([
+            integrate_energy_in_pop_pctile_range(
+                percentile_list[max(0, i - 1)],
+                percentile_list[i],
+                x_data,
+                country_summary_data["spline"][idx_country], 
+                country_summary_data["Pleft"][idx_country], 
+                country_summary_data["Qleft"][idx_country],
+                country_summary_data["Pright"][idx_country], 
+                country_summary_data["Qright"][idx_country], 
+                country_summary_data["Gamma"][idx_country], 
+                country_summary_data["Energy"][idx_country],
+                country_summary_data["Energy Integral"][idx_country]
+            )
+            for i in range(len(percentile_list))
+        ])
+        for idx_country in range(len(country_summary_data["Population"]))
+        ])
+
+    if verbose_level > 0:
+        print("Completed generating energy use lists.")
+
+    return per_capita_energy_bdry_country, cum_energy_bdry_country
+
+def energy_per_capita_fn(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy, pop, energy_integral):
+    """
+    Computes the energy per capita usage levels for a country based on the given parameters.
+
+    Parameters:
+        x: float
+            A scalar value, must be numeric.
+        x_data: list of upper bound of income levels
+        spline: result of CubicSpline fit (for middle of income lorenz curve)
+        p_left, q_left: floats
+            Parametersfor the left segment of the Lorenz curve.
+        gamma: float
+            Elasticity parameter.
+        pop: float
+            Country level population.
+        energy: float
+            Total energy use by country
+
     Returns:
         float
-            The derivative f'(x) evaluated at the given x.
+            The energy per capita value at that percentile value.
     """
-    # Left analytic segment: 0 <= x <= x_data[1]
-    if x <= x_data[1]:
-        return jantzen_volpert_fn_deriv(x, p_left, q_left)
-    
-    # Middle spline segment: x_data[1] < x < x_data[-2]
-    elif x < x_data[-2]:
-        # Compute the derivative using the spline's derivative.
-        return spline.derivative()(x)
-    
-    # Right analytic segment: x_data[-2] <= x <= 1
-    else:
-        return jantzen_volpert_fn_deriv(x, p_right, q_right)
-    
-def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma):
+
+    # Compute the derivative of energy use with respect to x (population percentile)
+    deriv = compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral)
+
+    # return derivative times mean country level energy use
+    return deriv * energy / pop
+
+def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral):
     """
     Computes the derivative of f(x)^gamma with respect to x for 0 <= x <= 1, where f(x) is defined piecewise as:
       - For x in [0, x_data[1]]:
@@ -577,188 +671,83 @@ def compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_rig
         f_val = jantzen_volpert_fn(x, p_right, q_right)
         f_prime = jantzen_volpert_fn_deriv(x, p_right, q_right)
     
-    return gamma * f_val**(gamma - 1) * f_prime
+    return gamma * f_val**(gamma - 1) * f_prime / energy_integral
 
-#----------------------------------------------------------------------------------------------------
-#-----------CODE ABOVE NOTE USED --------------------------------------------------------------------
-#----------------------------------------------------------------------------------------------------
 
-def integral_energy_lorenz(pp, qq, gamma, energy, energy_integral,epsilon):
+def compute_d_income_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right):
     """
-    Computes the integral of the energy Lorenz bin over the range [0, 1].
-
+    Computes the derivative of the piecewise function f(x) at a given x, where f(x)
+    is defined as:
+      - For x in [0, x_data[1]]:
+            f(x) = jantzen_volpert_fn(x, p_left, q_left)
+      - For x in [x_data[1], x_data[-2]]:
+            f(x) = spline(x)
+      - For x in [x_data[-2], 1]:
+            f(x) = jantzen_volpert_fn(x, p_right, q_right)
+            
     Parameters:
-        pp: float
-            Parameter pp for the Lorenz curve.
-        qq: float
-            Parameter qq for the Lorenz curve.
-        gamma: float
-            Elasticity parameter.
-        energy: float
-            Energy level.
-        energy_integral: float
-            Pre-computed integral of energy.
-
+        x : float
+            The point at which the derivative is evaluated.
+        x_data : array-like
+            Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
+        spline : CubicSpline
+            The fitted spline function for the middle segment.
+        p_left, q_left : float
+            Parameters for the analytic function on the left segment.
+        p_right, q_right : float
+            Parameters for the analytic function on the right segment.
+            
     Returns:
         float
-            The result of the integral over the specified range.
+            The derivative f'(x) evaluated at the given x.
     """
-    # Function to integrate
-    def integrand(x0):
-        return energy_in_lorenz_range(0, x0, pp, qq, gamma, energy, energy_integral,epsilon)
-
-    # Perform the numerical integration
-    result, _ = quad(integrand, 0, 1, epsrel = epsilon)  # Integrate over the range [0, 1]
-    return result
-
-#-------------------------------------------------------------------------------------------------------------
-
-def energy_per_capita_fn(x, pp, qq, gamma, pop, energy, energy_integral):
-    """
-    Computes the energy per capita function based on the given parameters.
-
-    Parameters:
-        x: float
-            A scalar value, must be numeric.
-        pp: float
-            Parameter pp for the Lorenz curve.
-        qq: float
-            Parameter qq for the Lorenz curve.
-        gamma: float
-            Elasticity parameter.
-        pop: float
-            Population size.
-        energy: float
-            Energy level.
-        energy_integral: float
-            Pre-computed integral of energy.
-
-    Returns:
-        float
-            The energy per capita value.
-    """
-
-    # Compute the main term
-    numerator = (
-        energy / pop
-    ) * (
-        (pp * (1 - (1 - x)**qq) * x**(-1 + pp) +
-         qq * (1 - x)**(-1 + qq) * x**pp)**gamma
-    )
-
-    # Replace indeterminate values with 0 and complex infinity with infinity
-    if numerator == float('inf') or numerator == float('nan') or energy_integral == 0:
-        return 0
-    return numerator / energy_integral
-
-#-------------------------------------------------------------------------------------------------------------
-
-def energy_in_lorenz_range(x0, x1, pp, qq, gamma, energy, energy_integral, epsilon):
-    """
-    Computes the energy Lorenz bin integral over a specified range.
-
-    Parameters:
-        x0: float
-            Lower bound of the integration range.
-        x1: float
-            Upper bound of the integration range.
-        pp: float
-            Parameter pp for the Lorenz curve.
-        qq: float
-            Parameter qq for the Lorenz curve.
-        gamma: float
-            Elasticity parameter.
-        energy: float
-            Energy level.
-        energy_integral: float
-            Pre-computed integral of energy.
-
-    Returns:
-        float
-            The value of the energy Lorenz bin for the given range.
-    """
-
-    # Define the integrand
-    def integrand(x):
-        return (pp * (1 - (1 - x)**qq) * x**(-1 + pp) +
-                qq * (1 - x)**(-1 + qq) * x**pp)**gamma
-
-    # Perform the numerical integration over [x0, x1]
-    integral_result, _ = quad(integrand, x0, x1, epsrel = epsilon)
-
-    # Scale the result by energy and energyIntegral
-    if energy_integral == 0:
-        return 0
-    return (energy / energy_integral) * integral_result
-
-
-
-
-#-------------------------------------------------------------------------------------------------------------
-
-def gen_country_lists_by_fract_of_pop(country_list, percentile_list, epsilon, verbose_level):
-    """
-    Generates lists of per capita energy use and cumulative energy use
-    by population percentile for each country.
-
-    Parameters:
-        country_list: dict
-            The dictionary containing country-level data.
-        percentile_list: list
-            A list of percentiles (e.g., np.arange(0, 1.01, 0.01)).
-        filename_prefix: str
-            Name to be used in output (not used directly here but passed).
-        verbose_level: int
-            Level of verbosity for print statements.
-
+    # Left analytic segment: 0 <= x <= x_data[1]
+    if x <= x_data[1]:
+        return jantzen_volpert_fn_deriv(x, p_left, q_left)
     
-            - per_capita_energy_bdry_country: numpy array of per capita energy use.
-            - cum_energy_bdry_country: numpy of cumulative energy use.
+    # Middle spline segment: x_data[1] < x < x_data[-2]
+    elif x < x_data[-2]:
+        # Compute the derivative using the spline's derivative.
+        return spline.derivative()(x)
+    
+    # Right analytic segment: x_data[-2] <= x <= 1
+    else:
+        return jantzen_volpert_fn_deriv(x, p_right, q_right)
+    
+def integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy, energy_integral):
     """
-    if verbose_level > 0:
-        print("Generating lists of per capita and cumulative energy use by population percentile...")
+    Integrates compute_d_energy_lorenz_dx from x0 to x1.
+    
+    Parameters:
+        x0, x1 : float
+            The integration bounds.
+        x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral : parameters
+            Same as those used in compute_d_energy_lorenz_dx.
+    
+    Returns:
+        float
+            The integral of d(energy_lorenz)/dx from x0 to x1.
+    """
+    
+    def integrand(x):
+        return compute_d_energy_lorenz_dx(x, x_data, spline, p_left, q_left, p_right, q_right, gamma, energy_integral)
+    
+    result, error = quad(integrand, x0, x1)
+    return energy * result
 
-    # Generate per capita energy use by population percentile
-    per_capita_energy_bdry_country = np.array([
-        [
-            energy_per_capita_fn(
-                x, 
-                country_list["P"][idx_country], 
-                country_list["Q"][idx_country], 
-                country_list["Gamma"][idx_country], 
-                country_list["Population"][idx_country], 
-                country_list["Energy"][idx_country], 
-                country_list["Integral"][idx_country]
-            )
-            for x in percentile_list
-        ]
-        for idx_country in range(len(country_list["Population"]))
-        ])
 
-    # Generate cumulative energy use by population percentile
-    cum_energy_bdry_country = np.array([
-        np.cumsum([
-            energy_in_lorenz_range(
-                percentile_list[max(0, i - 1)],
-                percentile_list[i],
-                country_list["P"][idx_country],
-                country_list["Q"][idx_country],
-                country_list["Gamma"][idx_country],
-                country_list["Energy"][idx_country],
-                country_list["Integral"][idx_country],
-                epsilon
-            )
-            for i in range(len(percentile_list))
-        ])
-        for idx_country in range(len(country_list["Population"]))
-        ])
 
-    if verbose_level > 0:
-        print("Completed generating energy use lists.")
 
-    return per_capita_energy_bdry_country, cum_energy_bdry_country
 
-#-------------------------------------------------------------------------------------------------------------
+
+#----------------------------------------------------------------------------------------------------
+
+def jantzen_volpert_fn_deriv(x, p, q):
+    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
+    term2 = x**p * q * (1 - x)**(q - 1)
+    return term1 + term2
+
+#%% compute values as a function of per capita energy level
 
 def fract_pop_in_country_to_energy_per_capita_level(per_capita_energy_bdry_country, pct_list, e_val_list):
     """
@@ -947,21 +936,21 @@ def find_country_groups_per_capita(input_data, n_groups, idx_group):
 
 #-------------------------------------------------------------------------------------------------------------
 
-def find_country_group_indices(country_groups, country_list):
+def find_country_group_indices(country_groups, country_summary_data):
     """
     Finds the indices of countries in the country list that belong to each group.
 
     Parameters:
         country_groups: list of lists
             A list where each sublist contains country identifiers (e.g., country codes) for a specific group.
-        country_list: dict
+        country_summary_data: dict
             A dictionary containing country-level data, where "Country Code" is a key referencing country identifiers.
 
     Returns:
         list of lists:
-            A list where each sublist contains the indices of countries in the `country_list` that belong to the respective group.
+            A list where each sublist contains the indices of countries in the `country_summary_data` that belong to the respective group.
     """
-    country_codes = country_list["Country Code"]  # Extract country codes from the country list
+    country_codes = country_summary_data["Country Code"]  # Extract country codes from the country list
 
     # Find indices for each group
     group_indices = [
@@ -972,6 +961,58 @@ def find_country_group_indices(country_groups, country_list):
     return group_indices
 
 
+
+def export_country_group_table(input_data, country_groups, group_names, filename_prefix, verbose_level):
+    """
+    Exports a table of country names, country codes, populations, per-capita GDP, per-capita income, and group membership.
+
+    Parameters:
+        input_data: pandas.DataFrame
+            Input data containing country-level information.
+        country_groups: list of lists
+            Indices of countries in each group.
+        group_names: list
+            Names of the groups.
+        filename_prefix: str
+            Name used in the output file name.
+        verbose_level: int
+            Level of verbosity for printing progress and results.
+
+    Returns:
+        None
+    """
+    # Create a list to store the output data
+    output_data = []
+
+    # Iterate over each group and its corresponding name
+    print ("country_groups", country_groups)
+    for group_idx, group in enumerate(country_groups):
+        print (group_idx,group)
+        group_name = group_names[group_idx]
+        for country_code in group:
+            # Find the index of the country in the input data
+            country_idx = input_data[input_data.iloc[:, 2] == country_code].index[0]
+            country_name = input_data.iloc[country_idx, 1]
+            country_code = input_data.iloc[country_idx, 2]
+            population = input_data.iloc[country_idx, 4]
+            per_capita_gdp = input_data.iloc[country_idx, 5] / population
+            per_capita_income = input_data.iloc[country_idx, 6] / population
+            output_data.append([country_name, country_code, population, per_capita_gdp, per_capita_income, group_name])
+
+    # Define column headings
+    headings = ["Country Name", "Country Code", "Population", "Per Capita GDP", "Per Capita Income", "Group"]
+
+    # Create a pandas DataFrame
+    df = pd.DataFrame(output_data, columns=headings)
+
+    # Create the output file name
+    file_name = f"./{filename_prefix}/{filename_prefix}_country_group_table.xlsx"
+
+    # Export to excel
+    df.to_excel(file_name, index=False)
+
+    if verbose_level > 0:
+        print(f"Exported {file_name}")
 #-------------------------------------------------------------------------------------------------------------
 
 def export_groups_percentile(groups, group_names, group_type, input_data, 
@@ -1188,12 +1229,12 @@ def export_countries_percentile(input_data, percentile_list,
 
 #-------------------------------------------------------------------------------------------------------------
 
-def export_country_list(country_list, filename_prefix, verbose_level):
+def export_country_summary_data(country_summary_data, filename_prefix, verbose_level):
     """
     Exports the country list with relevant headings to an Excel file.
 
     Parameters:
-        country_list: dictionary of lists by country index.
+        country_summary_data: dictionary of lists by country index.
             keys should be: 
             []'Country Name', 'Country Code', 'RMS', 'P', 'Q', 
             'Population', 'GDP', 'Energy', 'Gamma', 'Integral', 'Income Gini', 
@@ -1207,28 +1248,10 @@ def export_country_list(country_list, filename_prefix, verbose_level):
     Returns:
         None
     """
-    # Step 1: Define column headings
-    headings = [
-        "country name",
-        "country code",
-        "rms fractional error of income in each World Bank bin",
-        "p in Jantzen-Volper-2013 fit",
-        "q in Jantzen-Volpert-2013 fit",
-        "population",
-        "gdp (2019$)",
-        "energy (kW)",
-        "income elasticity of energy use",
-        "scaling factor for energy integrals",
-        "income GINI coefficient",
-        "energy GINI coefficient"
-    ]
 
-    # Step 2: Combine headings and country list
-    # Transpose the data to match row-wise format
 
     # Create the pandas DataFrame
-    df = pd.DataFrame(country_list)
-    df.columns = headings
+    df = pd.DataFrame(country_summary_data) # keys are column headings by default
 
     # Step 3: Export to Excel
     file_name = f"./{filename_prefix}/{filename_prefix}_country_data_various.xlsx"
@@ -1241,12 +1264,12 @@ def export_country_list(country_list, filename_prefix, verbose_level):
 #%%
 # main run
 
-def combine_energy_data(country_list, cum_energy_bdry_country, per_capita_energy_bdry_country, global_bins_out0):
+def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capita_energy_bdry_country, global_bins_out0):
     """
     Combines energy data and produces aggregated results based on population and energy distribution.
 
     Parameters:
-        country_list: dict
+        country_summary_data: dict
             Dictionary containing country-level data, including population information.
         cum_energy_bdry_country: numpy.array
             Cumulative energy use by population percentile for each country.
@@ -1267,7 +1290,7 @@ def combine_energy_data(country_list, cum_energy_bdry_country, per_capita_energy
     energy_bdry_country = cum_energy_bdry_country[:, 1:] - cum_energy_bdry_country[:, :-1]
 
     # Step 3: Calculate population in each increment
-    population_table = (np.expand_dims(country_list["Population"], axis=1) / n_bins_in).repeat(n_bins_in, axis=1)
+    population_table = (np.expand_dims(country_summary_data["Population"], axis=1) / n_bins_in).repeat(n_bins_in, axis=1)
 
     # Step 4: Flatten and sort the data
     sorted_table = np.hstack([
@@ -1428,6 +1451,51 @@ def redistribute(combined_energy_data):
 
     return np.column_stack((lower_bound, upper_bound, added_energy, freed_energy[::-1]))
 
+#-------------------------------------------------------------------------------------------------------------
+
+def export_redist_energy_data(redist, filename_prefix):
+    """
+    Exports redistribution energy data with appropriate headings to an excel file.
+
+    This does two calculations:
+    1. How much energy would you need to add globally to bring the lowest X% of energy users up to the energy
+         use rate of the Xth percentile?
+    2. How much energy would you save globally if the highest X% of energy users reduced their energy use to the
+    Parameters:
+        redist: numpy.ndarray
+            Redistribution data as a table with columns:
+            - Lower bound
+            - Higher bound
+            - Fraction of global energy supply required
+            - Fraction of global energy supply made available
+        filename_prefix: str
+            Name used in the output file name.
+        run_name: str
+            run_name used in the output file name.
+
+    Returns:
+        None
+    """
+    # Define column headings
+    headings = [
+        "lower bound",
+        "higher bound",
+        "fraction of global energy supply required to bring everyone "
+        "below this level to the upper bound of this level",
+        "fraction of global energy supply made available if everyone "
+        "above this level came down to the per capita energy use of this lower bound"
+    ]
+
+    # Create the output file name
+    file_name = f"./{filename_prefix}/{filename_prefix}_global_redist_various_b{len(redist)}.xlsx"
+
+    df = pd.DataFrame(redist)
+    df.columns = headings
+
+    # Export to excel
+    df.to_excel(file_name, index=False)
+
+    print(f"Exported {file_name}")
 
 
 #%%
@@ -1446,9 +1514,14 @@ if __name__ == "__main__":
     global_bins_out = 1000 # number of bins for output
     verbose_level = 2
     dir = r"C:\Users\kcaldeira\My Drive\energy_distribution"
-    data_input_file_name = "Data-input_Virguez-et-al_2025-01-29.xlsx"
+    data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input (2019) 2025-02-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input (2018) 2025-02-05.xlsx"
     #data_input_file_name = "Data-input_Dioha-et-al_2022-08-05.xlsx"
     epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
+    date_stamp = datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]
    #--------------------------------------------------------------------------
 
        # Import the Excel file
@@ -1464,11 +1537,13 @@ if __name__ == "__main__":
     if verbose_level > 0: print(f"Gamma: {gamma}")
 
     # within country gamma = between country gamma
-    run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir)
+    run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    # gamma = 0.0
+    run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     # gamma = 0.5
-    run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir)
+    run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     # gamma = 1.0
-    run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir)
+    run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
 
 # usage:
 # python.exe -i "c:/Users/kcaldeira/My Drive/Edgar distribution/energy_dist.py"
