@@ -250,15 +250,15 @@ def prep_country_level_lorenz_data(input_data, gamma):
     energy_integral_list = []
     for spline_fn, values in lorenz_interpolation_list_country:
         p_left, q_left, p_right, q_right, *rest = values  # Unpack properly
-        energy_integral = compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, 1.0)
+        energy_integral = compute_energy_integral(0, 1, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma)
         energy_integral_list.append(energy_integral)
 
-    if verbose_level > 1:
+    if verbose_level > 2:
         print("energy integral list: ", energy_integral_list)
          
     # Step 5: Compute income Gini list
     income_gini_list = [
-        1 - compute_income_lorenz_integral(0.0,1.0,x_data, spline_fn, p_left, q_left, p_right, q_right) / 0.5
+        1 - compute_income_lorenz_integral(0.0, 1.0, x_data, spline_fn, p_left, q_left, p_right, q_right) / 0.5
         for spline_fn,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
 
 
@@ -332,7 +332,7 @@ def produce_lorenz_interpolation(x_data, y_data):
     
     # Fit the spline using second to next-to-last points
     spline_fn = fit_monotonic_convex_spline_with_derivatives(x_data[1:-2], y_data[1:-2], dy_dx_start, dy_dx_end)
-    print("spline_fn: ", spline_fn.c)
+
 
     spline_coeffs = [coef for segment in spline_fn.c.T.tolist() for coef in segment]
     return spline_fn,( [p_start, q_start, p_end, q_end] + spline_coeffs )
@@ -377,9 +377,9 @@ def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy
     return spline_fn
 
 
-def compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral):
+def compute_energy_integral(x_left,x_right,x_data, spline_fn, p_left, q_left, p_right, q_right, gamma):
     """
-    Integrates f(x)^gamma over [0, 1] where f(x) is defined piecewise:
+    Integrates (d f(x)/d x)^gamma over [x_left, x_right] where f(x) is defined piecewise:
       - For x in [0, x_data[1]]: f(x) = jantzen_volpert_fn(x, p_left, q_left)
       - For x in [x_data[1], x_data[-3]: f(x) = spline_fn(x)
       - For x in [x_data[-3, 1]: f(x) = jantzen_volpert_fn(x, p_right, q_right)
@@ -401,24 +401,62 @@ def compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q
             The numerical value of the integral of f(x)^gamma from 0 to 1.
     """
     # Integrate the left analytic segment from 0 to x_data[1]:
-    integral_left, _ = quad(lambda x: jantzen_volpert_fn(x, p_left, q_left)**gamma,
-                            0, x_data[1])
-    print ("spline_fn(0.25), spline_fn(0.5, spline_fn(0.75): ", spline_fn(0.25), spline_fn(0.5), spline_fn(0.75))
-    print ("x_data[1], x_data[-3: ", x_data[1], x_data[-3]
-    # Integrate the middle spline segment numerically from x_data[1] to x_data[3]: 20% to 80%
-    integral_middle, error = quad(lambda x: spline_fn(x)**gamma, x_data[1], x_data[-3])
-    print("integral_middle, error: ", integral_middle, error)
+    if x_left < x_data[1]: # i.e., if x_right < x_data[1] (i.e., 20%)
+        integral_left, _ = quad(lambda x: jantzen_volpert_fn_deriv(x, p_left, q_left)**gamma,
+                            x_left, min(x_right,x_data[1]))
+    else:
+        integral_left = 0.0
+
+    # Integrate the middle spline segment numerically from x_data[1] to x_data[-3]: 20% to 80%
+    if x_left < x_data[-3] and x_right > x_data[1]:
+        spline_derivative = spline_fn.derivative()
+        integral_middle, error = quad(lambda x: spline_derivative(x)**gamma, max(x_left,x_data[1]), min(x_right,x_data[-3]))
+    else:
+        integral_middle = 0.0
 
 
     # Integrate the right analytic segment from x_data[-] to 1:
-    integral_right, _ = quad(lambda x: jantzen_volpert_fn(x, p_right, q_right)**gamma,
-                             x_data[-3],1)
+    if x_right > x_data[-3]: # i.e., if x_right > x_data[-2] (i.e., 80%)
+        integral_right, _ = quad(lambda x: jantzen_volpert_fn_deriv(x, p_right, q_right)**gamma,
+                             max(x_left,x_data[-3]),x_right)
+    else:
+        integral_right = 0.0
     
     # Sum the three pieces to get the total integral:
     total_integral = integral_left + integral_middle + integral_right
-    print("integral_left, integral_middle, integral_right, total_integral: ", integral_left, integral_middle, integral_right, total_integral)
-    print("energy_integral: ", energy_integral)
+    #print("integral_left, integral_middle, integral_right, total_integral: ", integral_left, integral_middle, integral_right, total_integral)
+    #print("energy_integral: ", total_integral)
+    return total_integral 
+
+def compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral):
+    """
+    Integrates (d f(x)/d x)^gamma over [0, 1] where f(x) is defined piecewise:
+      - For x in [0, x_data[1]]: f(x) = jantzen_volpert_fn(x, p_left, q_left)
+      - For x in [x_data[1], x_data[-3]: f(x) = spline_fn(x)
+      - For x in [x_data[-3, 1]: f(x) = jantzen_volpert_fn(x, p_right, q_right)
+      
+    Parameters:
+        x_data : array-like
+            Array of x-values spanning [0, 1] (with x_data[0] == 0 and x_data[-1] == 1).
+        spline_fn : CubicSpline
+            The fitted spline function for the middle segment.
+        p_left, q_left : float
+            Parameters for the analytic function on the left segment.
+        p_right, q_right : float
+            Parameters for the analytic function on the right segment.
+        gamma : float
+            The exponent to which f(x) is raised.
+            
+    Returns:
+        total_integral : float 
+            The numerical value of the integral of f(x)^gamma from 0 to 1.
+    """
+    # Integrate the left analytic segment from 0 to x_data[1]:
+    total_integral, _ = quad(lambda x:  compute_energy_integral(0,x,x_data, spline_fn, p_left, q_left, p_right, q_right, gamma),
+                            0., 1.)
     return total_integral / energy_integral
+
+
 
 
 def compute_income_lorenz_integral(x0,x1,x_data, spline_fn, p_left, q_left, p_right, q_right):
@@ -572,7 +610,7 @@ def gen_country_summary_datas_by_fract_of_pop(country_summary_data, percentile_l
             energy_per_capita_fn(
                 x, 
                 x_data,
-                country_summary_data["spline"][idx_country], 
+                country_summary_data["spline_fn"][idx_country], 
                 country_summary_data["Pleft"][idx_country], 
                 country_summary_data["Qleft"][idx_country],
                 country_summary_data["Pright"][idx_country], 
@@ -1493,6 +1531,9 @@ if __name__ == "__main__":
     verbose_level = 2
     dir = r"C:\Users\kcaldeira\My Drive\energy_distribution"
     data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test.xlsx"
+    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
+    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx"
     #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2019) 2025-02-05.xlsx"
@@ -1517,11 +1558,11 @@ if __name__ == "__main__":
     # within country gamma = between country gamma
     run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     # gamma = 0.0
-    run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     # gamma = 0.5
-    run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     # gamma = 1.0
-    run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
 
 # usage:
 # python.exe -i "c:/Users/kcaldeira/My Drive/Edgar distribution/energy_dist.py"
