@@ -362,6 +362,13 @@ print(f"Estimated p: {p}, Estimated q: {q}")
 
 def jantzen_volpert_fn(x, p, q):
     return x**p * (1 - (1 - x)**q)
+    #   == x**p - x**p * (1 - x)**q
+
+
+def jantzen_volpert_fn_deriv(x, p, q):
+    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
+    term2 = x**p * q * (1 - x)**(q - 1)
+    return term1 + term2
 
 
 def fit_monotonic_convex_spline_with_derivatives(x_data, y_data, dy_dx_start, dy_dx_end):
@@ -542,7 +549,7 @@ def compute_key_country_level_parameters(country_summary_data, percentile_list, 
         print(f"Generating list by country and percentile of population; {datetime.now()}")
 
     # Step 2: Generate per capita energy boundaries by country
-    per_capita_energy_bdry_country, cum_energy_bdry_country = gen_country_summary_datas_by_fract_of_pop(
+    per_capita_energy_bdry_country, cum_energy_bdry_country = gen_country_summary_data_by_fract_of_pop(
         country_summary_data, percentile_list,epsilon, verbose_level
     )
 
@@ -580,7 +587,7 @@ def compute_key_country_level_parameters(country_summary_data, percentile_list, 
     }
 
 
-def gen_country_summary_datas_by_fract_of_pop(country_summary_data, percentile_list, epsilon, verbose_level):
+def gen_country_summary_data_by_fract_of_pop(country_summary_data, percentile_list, epsilon, verbose_level):
     """
     Generates lists of per capita energy use and cumulative energy use
     by population percentile for each country.
@@ -693,7 +700,7 @@ def energy_per_capita_fn(x, x_data, spline_fn, p_left, q_left, p_right, q_right,
 
 def compute_d_energy_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral):
     """
-    Computes the derivative of f(x)^gamma with respect to x for 0 <= x <= 1, where f(x) is defined piecewise as:
+    Computes f"(x)^gamma with respect to x for 0 <= x <= 1, where f(x) is defined piecewise as:
       - For x in [0, x_data[1]]:
             f(x) = jantzen_volpert_fn(x, p_left, q_left)
       - For x in [x_data[1], x_data[-2]]:
@@ -725,16 +732,13 @@ def compute_d_energy_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_
     """
     # Compute f(x) and f'(x) based on which segment x falls into.
     if x <= x_data[1]:
-        f_val = jantzen_volpert_fn(x, p_left, q_left)
         f_prime = jantzen_volpert_fn_deriv(x, p_left, q_left)
-    elif x < x_data[-2]:
-        f_val = spline_fn(x)
+    elif x <= x_data[-3]:
         f_prime = spline_fn.derivative()(x)
     else:
-        f_val = jantzen_volpert_fn(x, p_right, q_right)
         f_prime = jantzen_volpert_fn_deriv(x, p_right, q_right)
     
-    return gamma * f_val**(gamma - 1) * f_prime / energy_integral
+    return  f_prime**gamma / energy_integral
 
 
 def compute_d_income_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_right):
@@ -769,7 +773,7 @@ def compute_d_income_lorenz_dx(x, x_data, spline_fn, p_left, q_left, p_right, q_
         return jantzen_volpert_fn_deriv(x, p_left, q_left)
     
     # Middle spline segment: x_data[1] < x < x_data[-2]
-    elif x < x_data[-2]:
+    elif x <= x_data[-3]:
         # Compute the derivative using the spline's derivative.
         return spline_fn.derivative()(x)
     
@@ -800,11 +804,6 @@ def integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline_fn, p_left, q_le
     result, error = quad(integrand, x0, x1)
     return energy * result
 
-
-def jantzen_volpert_fn_deriv(x, p, q):
-    term1 = p * x**(p - 1) * (1 - (1 - x)**q)
-    term2 = x**p * q * (1 - x)**(q - 1)
-    return term1 + term2
 
 #%% compute values as a function of per capita energy level
 
@@ -1557,12 +1556,12 @@ if __name__ == "__main__":
 
     # within country gamma = between country gamma
     run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
-    # gamma = 0.0
-    #run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
-    # gamma = 0.5
-    #run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
-    # gamma = 1.0
-    #run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    gamma = 0.0
+    run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    gamma = 0.5
+    run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    gamma = 1.0
+    run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
 
 # usage:
 # python.exe -i "c:/Users/kcaldeira/My Drive/Edgar distribution/energy_dist.py"
