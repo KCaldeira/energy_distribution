@@ -902,7 +902,9 @@ def find_country_groups_per_capita(input_data, n_groups, idx_group):
     """
     # Step 1: Sort data by the chosen per capita metric
     input_data["PerCapita"] = input_data.iloc[:, idx_group] / input_data.iloc[:, 4]  # Per capita value (e.g., income/pop)
+    print (input_data["PerCapita"], input_data.iloc[:, idx_group], input_data.iloc[:, 4])
     sorted_data = input_data.sort_values(by="PerCapita").reset_index(drop=True)
+    print (sorted_data)
 
     # Step 2: Calculate cumulative population, income, and energy
     cum_pop = sorted_data.iloc[:, 4].cumsum()
@@ -914,9 +916,14 @@ def find_country_groups_per_capita(input_data, n_groups, idx_group):
     cum_energy = sorted_data.iloc[:, 6].cumsum()
     cum_energy /= cum_energy.iloc[-1]  # Normalize to [0, 1]
 
+    print (cum_pop, cum_income, cum_energy)
+
     # Step 3: Determine country positions corresponding to population groups
-    pop_targets = np.linspace(1 / n_groups, 1, n_groups)
+    pop_targets = np.linspace(1. / n_groups, 1, n_groups)
     country_positions = [np.searchsorted(cum_pop, target) for target in pop_targets]
+
+    print ("pop_targets ", pop_targets)
+    print ("country_positions ", country_positions)
 
     # Step 4: Create the table with relevant data
     country_pos_data = sorted_data.iloc[country_positions]
@@ -1529,10 +1536,11 @@ if __name__ == "__main__":
     global_bins_out = 1000 # number of bins for output
     verbose_level = 2
     dir = r"C:\Users\kcaldeira\My Drive\energy_distribution"
-    data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
-    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx"
+    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx" 
+    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test4.xlsx" # only 5 countries, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2019) 2025-02-05.xlsx"
@@ -1556,12 +1564,12 @@ if __name__ == "__main__":
 
     # within country gamma = between country gamma
     run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
-    gamma = 0.0
-    run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
-    gamma = 0.5
-    run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
-    gamma = 1.0
-    run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #gamma = 0.0
+    #run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #gamma = 0.5
+    #run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #gamma = 1.0
+    #run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
 
 # usage:
 # python.exe -i "c:/Users/kcaldeira/My Drive/Edgar distribution/energy_dist.py"
