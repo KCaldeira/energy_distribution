@@ -109,7 +109,7 @@ def fit_population_weighted(pop, per_capita_energy, per_capita_gdp):
 
 #%% Main code to compute energy distribution analysis
 
-def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp):
+def run_energy_dist(input_data, gamma, pct_steps, energy_steps, n_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp):
 
     """
     Do the main energy distribution analysis for the given input data and gamma value (i.e., elastcity of energy use).
@@ -189,7 +189,7 @@ def run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out,
     combined_data = combine_energy_data(key_variables["country_summary_data"], 
                         key_variables["cum_energy_bdry_country"],
                         key_variables["per_capita_energy_bdry_country"], 
-                        global_bins_out)
+                        n_bins_out)
     # write out combined data
     export_combined_energy_data(combined_data, filename_prefix)
 
@@ -920,7 +920,7 @@ def find_country_groups_per_capita(input_data, n_groups, idx_group):
 
     # Step 3: Determine country positions corresponding to population groups
     pop_targets = np.linspace(1. / n_groups, 1, n_groups)
-    country_positions = [np.searchsorted(cum_pop, target) for target in pop_targets]
+    country_positions = [np.searchsorted(cum_pop, target-epsilon) for target in pop_targets]
 
     print ("pop_targets ", pop_targets)
     print ("country_positions ", country_positions)
@@ -1286,7 +1286,7 @@ def export_country_summary_data(country_summary_data, filename_prefix, verbose_l
 #%%
 # main run
 
-def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capita_energy_bdry_country, global_bins_out0):
+def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capita_energy_bdry_country, n_bins_out0):
     """
     Combines energy data and produces aggregated results based on population and energy distribution.
 
@@ -1297,7 +1297,7 @@ def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capit
             Cumulative energy use by population percentile for each country.
         per_capita_energy_bdry_country: numpy.ndarray
             Per capita energy use by population percentile for each country.
-        global_bins_out0: int 
+        n_bins_out0: int 
             Number of bins for output. If 0,  uses the input bin count.
 
     Returns:
@@ -1306,7 +1306,7 @@ def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capit
     """
     # Step 1: Determine the number of bins
     n_bins_in = cum_energy_bdry_country.shape[1] - 1
-    global_bins_out = global_bins_out0 if global_bins_out0 > 0 else n_bins_in
+    n_bins_out = n_bins_out0 if n_bins_out0 > 0 else n_bins_in
 
     # Step 2: Calculate increments (energy boundaries for each bin)
     energy_bdry_country = cum_energy_bdry_country[:, 1:] - cum_energy_bdry_country[:, :-1]
@@ -1318,8 +1318,8 @@ def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capit
     sorted_table = np.hstack([
         per_capita_energy_bdry_country[:, 1:].flatten()[:, np.newaxis],
         population_table.flatten()[:, np.newaxis],
-        energy_bdry_country.flatten()[:, np.newaxis]
-    ])
+        energy_bdry_country.flatten()[:, np.newaxis] # this is the amount of energy to the next lower bin
+        ])
     sorted_table = sorted_table[np.argsort(sorted_table[:, 0])]  # Sort by per capita energy
 
     # Step 5: Compute totals and cumulative fractions
@@ -1334,7 +1334,7 @@ def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capit
     per_capita_fn = interp1d(pop_energy_sort, np.log(per_capita_energy_energy_sort), kind="linear", fill_value="extrapolate")
 
     # Step 7: Create output dictionary
-    d_idx = 1.0 / global_bins_out
+    d_idx = 1.0 / n_bins_out
     i_max = np.max(pop_energy_sort)
     i_min = np.min(pop_energy_sort)
 
@@ -1348,14 +1348,14 @@ def combine_energy_data(country_summary_data, cum_energy_bdry_country, per_capit
         "higher_bound_per_capita_energy": []
     }
 
-    for idx in range(global_bins_out):
+    for idx in range(n_bins_out):
         i_low = max(i_min, idx * d_idx)
         i_high = min(i_max, (idx + 1) * d_idx)
         
         frac_energy_high = np.exp(energy_fn(i_high))
         frac_energy_low = np.exp(energy_fn(i_low))
         cum_energy_in_bin = frac_energy_high - frac_energy_low
-        per_capita_energy_in_bin = cum_energy_in_bin * total_energy / (total_population / global_bins_out)
+        per_capita_energy_in_bin = cum_energy_in_bin * total_energy / (total_population / n_bins_out)
         per_capita_low = np.exp(per_capita_fn(i_low))
         per_capita_high = np.exp(per_capita_fn(i_high))
 
@@ -1533,14 +1533,15 @@ if __name__ == "__main__":
     run_name = "test"  # Name of the run
     pct_steps = 10000  # 100 for testing, 10000 for production
     energy_steps = 1000 # 100 for test and summary output, 1000 for production
-    global_bins_out = 1000 # number of bins for output
+    n_bins_out = 1000 # number of bins for output
     verbose_level = 2
-    dir = r"C:\Users\kcaldeira\My Drive\energy_distribution"
+    dir = r"C:\Users\kcaldeira\github\energy_distribution"
     #data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx" 
-    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test4.xlsx" # only 5 countries, gamma = 0.5
+    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test4.xlsx" # only 5 countries, gamma = 0.5
+    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test5.xlsx" # only 10 countries, 2x5, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2019) 2025-02-05.xlsx"
@@ -1563,13 +1564,13 @@ if __name__ == "__main__":
     if verbose_level > 0: print(f"Gamma: {gamma}")
 
     # within country gamma = between country gamma
-    run_energy_dist(input_data, gamma, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    run_energy_dist(input_data, gamma, pct_steps, energy_steps, n_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     #gamma = 0.0
-    #run_energy_dist(input_data, 0.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #run_energy_dist(input_data, 0.0, pct_steps, energy_steps, n_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     #gamma = 0.5
-    #run_energy_dist(input_data, 0.5, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #run_energy_dist(input_data, 0.5, pct_steps, energy_steps, n_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
     #gamma = 1.0
-    #run_energy_dist(input_data, 1.0, pct_steps, energy_steps, global_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
+    #run_energy_dist(input_data, 1.0, pct_steps, energy_steps, n_bins_out, verbose_level,  epsilon, run_name, dir, date_stamp)
 
 # usage:
 # python.exe -i "c:/Users/kcaldeira/My Drive/Edgar distribution/energy_dist.py"
