@@ -845,41 +845,40 @@ def fract_pop_in_country_to_energy_per_capita_level(per_capita_energy_bdry_count
 
 #-------------------------------------------------------------------------------------------------------------
 
+
 def energy_in_country_to_fract_pop_level(cum_energy_bdry_country, pct_list, pop_fract_list):
     """
-    Computes the energy use mapped to fraction of population levels.
+    Maps energy use to specific population percentiles for each country.
 
     Parameters:
-        cum_energy_bdry_country: np.array
-            A list where each element corresponds to a country's cumulative energy boundaries.
+        cum_energy_bdry_country: list of np.array
+            Each array contains the cumulative energy values for a country, ordered by population percentiles.
         pct_list: list
-            A list of percentiles.
+            List of percentiles (e.g., [0.0, 0.1, ..., 1.0]) that define the x-values for interpolation.
         pop_fract_list: list of lists
-            A list of lists, where each sublist corresponds to the fraction of population for a specific country.
+            Each sublist contains population fraction levels (percentiles) for a specific country.
 
     Returns:
-        list of lists:
-            A list where each element corresponds to a country's energy use mapped to population levels.
+        np.array:
+            A 2D array where each row corresponds to a country, and each column corresponds to 
+            the energy use at the respective population percentile.
     """
     energy_table = []
+
     for idx in range(len(cum_energy_bdry_country)):
-        # Extract cumulative energy boundaries for the current country
         cum_energy = cum_energy_bdry_country[idx]
-        
-        # Determine the minimum and maximum energy levels
-        min_energy = np.min(cum_energy)
-        max_energy = np.max(cum_energy)
-        
-        # Create a linear interpolation function
+
+        # Create interpolation function from population percentiles to energy values
         interp_fn = interp1d(pct_list, cum_energy, bounds_error=False, fill_value=(cum_energy[0], cum_energy[-1]))
-        
-        # Map population fractions to energy values, clamping them to the [min_energy, max_energy] range
-        mapped_values = [interp_fn(np.clip(pop_frac, min_energy, max_energy)) for pop_frac in pop_fract_list[idx]]
-        
-        # Append the mapped values for the current country
+
+        # Clamp pop fractions to valid range of interpolation, then map to energy values
+        clamped_fracts = np.clip(pop_fract_list[idx], pct_list[0], pct_list[-1])
+        mapped_values = interp_fn(clamped_fracts)
+
         energy_table.append(mapped_values)
-    
+
     return np.array(energy_table)
+
 
 #%%
 # Code to summarize key variables and output as xlsx files
