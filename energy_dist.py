@@ -809,38 +809,35 @@ def integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline_fn, p_left, q_le
 
 def fract_pop_in_country_to_energy_per_capita_level(per_capita_energy_bdry_country, pct_list, e_val_list):
     """
-    Computes the fraction of the population by energy per capita level.
+    Maps energy per capita levels to population percentiles for each country.
 
     Parameters:
-        per_capita_energy_bdry_country: np.array
-            A list where each element corresponds to a country's per capita energy boundaries.
+        per_capita_energy_bdry_country: list of np.array
+            Each array contains per capita energy values (sorted) for a country, typically corresponding to population percentiles.
         pct_list: list
-            A list of percentiles.
+            List of percentiles (e.g., [0.0, 0.1, ..., 1.0]) that define the y-values for interpolation.
         e_val_list: list
-            A list of energy values to map to percentiles.
+            List of energy values to map to population percentiles.
 
     Returns:
-        np.array
-            A list where each element corresponds to a country's fraction of population mapped to energy levels.
+        np.array:
+            A 2D array where each row corresponds to a country, and each column corresponds to 
+            the population percentile associated with the respective energy value.
     """
     result = []
+
     for idx in range(len(per_capita_energy_bdry_country)):
-        # Extract per capita energy boundaries for the current country
         per_capita_energy = per_capita_energy_bdry_country[idx]
-        
-        # Determine the minimum and maximum energy levels
-        min_energy = min(per_capita_energy)
-        max_energy = max(per_capita_energy)
-        
-        # Create a linear interpolation function
+
+        # Create interpolation function from energy levels to percentiles
         interp_fn = interp1d(per_capita_energy, pct_list, bounds_error=False, fill_value=(pct_list[0], pct_list[-1]))
-        
-        # Map energy values to percentiles, clamping them to the [min_energy, max_energy] range
-        mapped_values = [interp_fn(np.clip(e_val, min_energy, max_energy)) for e_val in e_val_list]
-        
-        # Append the mapped values for the current country
+
+        # Clamp energy values to interpolation domain, then map to percentiles
+        clamped_energies = np.clip(e_val_list, per_capita_energy[0], per_capita_energy[-1])
+        mapped_values = interp_fn(clamped_energies)
+
         result.append(mapped_values)
-    
+
     return np.array(result)
 
 #-------------------------------------------------------------------------------------------------------------
