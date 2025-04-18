@@ -919,7 +919,17 @@ def find_country_groups_per_capita(excel_input_data, n_groups, idx_group):
 
     # Step 3: Determine country positions corresponding to population groups
     pop_targets = np.linspace(1. / n_groups, 1, n_groups)
-    country_positions = [np.searchsorted(cum_pop, target-epsilon) for target in pop_targets]
+    #country_positions = [np.searchsorted(cum_pop, target-epsilon) for target in pop_targets]
+    country_positions = np.array([np.searchsorted(cum_pop, target) for target in pop_targets])
+    # Convert to NumPy array to allow for NumPy-style indexing
+  
+
+    # check for duplicates in country_positions
+    duplicates = np.where(np.diff(country_positions) == 0)[0]
+    if duplicates.size > 0:
+        print ("Duplicates found in country_positions: ", duplicates)
+        print ("subtracting 1 from the duplicates as kluge")
+        country_positions[duplicates] -= 1
 
     print ("pop_targets ", pop_targets)
     print ("country_positions ", country_positions)
@@ -1125,7 +1135,7 @@ def compute_pc_and_cum_energy_for_group_by_percentile(groups, group_names, group
                    [[group_names[idx]] + group_pc_energy_interp[idx].tolist() for idx in range(len(groups))]
 
     out_group_ce = [["cumulative energy use by percentile - kWh"] + percentile_list] + \
-                   [[group_names[idx]] + group_cum_energy_interp[idx] for idx in range(len(groups))]
+                   [[group_names[idx]] + group_cum_energy_interp[idx].tolist() for idx in range(len(groups))]
 
     # Step 5: Export to Excel with column labels and transposed data
     out_pc_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_pop_{group_type}.xlsx"
@@ -1211,6 +1221,8 @@ def compute_cum_pop_and_energy_for_group_by_pc_energy(groups, group_names, group
     # Step 3: Export the first two tables to Excel with column labels and transposed data
     out_pc_file = f"./{filename_prefix}/{filename_prefix}_group_energyLevel_pop_{group_type}.xlsx"
     out_ce_file = f"./{filename_prefix}/{filename_prefix}_group_energyLevel_cumEnergy_{group_type}.xlsx"
+
+
     
     # For population to energy level data
     pc_df = pd.DataFrame(out_group_pc)
@@ -1625,12 +1637,14 @@ if __name__ == "__main__":
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx" 
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test4.xlsx" # only 5 countries, gamma = 0.5
-    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test5.xlsx" # only 10 countries, 2x5, gamma = 0.5
+    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test6.xlsx" # only 10 countries, 2x5, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2019) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2018) 2025-02-05.xlsx"
     #data_input_file_name = "Data-input_Dioha-et-al_2022-08-05.xlsx"
+    #data_input_file_name = "Energy Distribution Input (for Ken) 2025-01-24.xlsx"
+    #data_input_file_name = "Energy Distribution Input (for Ken) 2025-01-24 18-test.xlsx"
     epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
     date_stamp = datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]
    #--------------------------------------------------------------------------
