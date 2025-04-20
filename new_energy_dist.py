@@ -1181,9 +1181,9 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     # Reset the index to make the first row a column
     pc_df_transposed.reset_index(inplace=True)
     pc_df_transposed.columns = ['Energy Level'] + list(pc_df_transposed.columns[1:])
-    pc_df_transposed.to_excel(out_percap_energy_file, index=False)
+    pc_df_transposed.to_excel(out_cum_pop_level_file, index=False)
     if verbose_level > 0:
-        print(f"Exported {out_percap_energy_file}")
+        print(f"Exported {out_cum_pop_level_file}")
 
     # For cumulative energy data by per capita energy use
     ce_df = pd.DataFrame(out_group_cum_energy_level)
@@ -1192,9 +1192,9 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     # Reset the index to make the first row a column
     ce_df_transposed.reset_index(inplace=True)
     ce_df_transposed.columns = ['Energy Level'] + list(ce_df_transposed.columns[1:])
-    ce_df_transposed.to_excel(out_cum_energy_file, index=False)
+    ce_df_transposed.to_excel(out_cum_energy_level_file, index=False)
     if verbose_level > 0:
-        print(f"Exported {out_cum_energy_file}")
+        print(f"Exported {out_cum_energy_level_file}")
 
 #-------------------------------------------------------------------------------------------------------------
 
