@@ -1148,6 +1148,8 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     # Step 5: Export to Excel with column labels and transposed data
     out_percap_energy_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_pop_{group_type}.xlsx"
     out_cum_energy_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
+    out_cum_pop_level_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_pop_{group_type}.xlsx"
+    out_cum_energy_level_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
 
     # For per capita energy data by percentile of population
     pc_df = pd.DataFrame(out_group_percap_energy_pct)
