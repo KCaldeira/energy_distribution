@@ -796,6 +796,59 @@ def integrate_energy_in_pop_pctile_range(x0, x1, x_data, spline_fn, p_left, q_le
     result, error = quad(integrand, x0, x1)
     return energy * result
 
+def slope_estimate(x_data, y_data):
+    """
+    Estimates the slope of a line through the data points (x_data, y_data).
+    
+    Parameters:
+        x_data: list of floats
+            The x-coordinates of the data points.
+        y_data: list of floats
+            The y-coordinates of the data points.
+
+    Returns:
+        float
+            The estimated slope of the line through the data points.
+    """
+    # Calculate the slope using the finite difference method
+    slopes = np.diff(y_data) / np.diff(x_data)
+    midpoints = (x_data[1:] + x_data[:-1]) / 2
+    
+    # slopes is now a good estimate of the slope at the midpoints of the data points
+    # we need to now interpolate the slope to the x_data points
+    f = interp1d(midpoints, slopes, fill_value="extrapolate")
+    return f(x_data)        
+
+ def slope_log_estimate(x_data, y_data):
+    """
+    Estimates the slope of a line through the data points (x_data, y_data).
+    Sometimes we want the result to be in the form of how much y changes per percent increase in x
+
+    This is when slope_log_estimate is called.  The idea is that this is appropriate for functions that are linear in the log of x.
+    
+    Parameters:
+        x_data: list of floats
+            The x-coordinates of the data points.
+        y_data: list of floats
+            The y-coordinates of the data points.
+
+    Returns:
+        float
+            The estimated slope of the line through the data points.
+    """
+    # Calculate the slope using the finite difference method
+    slopes = np.diff(y_data) / np.diff(np.log(x_data))
+    logMidpoints = (np.log(x_data[1:]) + np.log(x_data[:-1])) / 2  
+    # This is taking the geometric mean which is consistent with a log-linear relationship
+
+    # slopes is now a good estimate of the slope at the midpoints of the data points
+    # we need to now interpolate the slope to the x_data points
+    f = interp1d(logMidpoints, slopes, fill_value="extrapolate")
+    return f(x_data)        
+
+    
+
+
 
 #%% compute values as a function of per capita energy level
 
@@ -1038,6 +1091,9 @@ def export_country_group_table(excel_input_data, country_groups, group_names, fi
         print(f"Exported {file_name}")
 #-------------------------------------------------------------------------------------------------------------
 
+
+#-------------------------------------------------------------------------------------------------------------
+
 def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_type, excel_input_data, 
                       percentile_vector, energy_level_vector, per_capita_energy_in_country_to_pop_percentile, 
                       cum_energy_in_country_to_pop_percentile, filename_prefix, verbose_level):
@@ -1151,30 +1207,35 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     out_cum_pop_level_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_pop_{group_type}.xlsx"
     out_cum_energy_level_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
 
+    
+    # ++++ If this next table is to make sense then the "Population Percentile" should be the population global percentile, sorted by income
+    # ++++ I don't think this is the case right now.
     # For per capita energy data by percentile of population
     pc_df = pd.DataFrame(out_group_percap_energy_pct)
 
     pc_df_transposed = pc_df.transpose()
     # Reset the index to make the first row a column
     pc_df_transposed.reset_index(inplace=True)
-    pc_df_transposed.columns = ['Population Percentile'] + list(pc_df_transposed.columns[1:])
+    pc_df_transposed.columns = ['GlobalPopulation Percentile'] + list(pc_df_transposed.columns[1:])
     pc_df_transposed.to_excel(out_percap_energy_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_percap_energy_file}")
 
+    # ++++ This next table is for making a Lorenz curve of cumulative energy use by population percentile
     # For cumulative energy data by percentile of population
     ce_df = pd.DataFrame(out_group_cum_energy_pct)
 
     ce_df_transposed = ce_df.transpose()
     # Reset the index to make the first row a column
     ce_df_transposed.reset_index(inplace=True)
-    ce_df_transposed.columns = ['Population Percentile'] + list(ce_df_transposed.columns[1:])
+    ce_df_transposed.columns = ['Global Population Percentile'] + list(ce_df_transposed.columns[1:])
     ce_df_transposed.to_excel(out_cum_energy_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_energy_file}")
 
     
-    # For per capita energy data by per capita energy use
+    # ++++ This next table is for making a figure showing the cumulative population by per capita energy use
+    # For number data by per capita energy use
     pc_df = pd.DataFrame(out_group_cum_pop_level)
 
     pc_df_transposed = pc_df.transpose()
@@ -1185,6 +1246,7 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     if verbose_level > 0:
         print(f"Exported {out_cum_pop_level_file}")
 
+    # ++++ This next table is for making a figure showing the cumulative energy use by per capita energy use
     # For cumulative energy data by per capita energy use
     ce_df = pd.DataFrame(out_group_cum_energy_level)
 
