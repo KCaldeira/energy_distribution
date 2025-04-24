@@ -1089,8 +1089,70 @@ def export_country_group_table(excel_input_data, country_groups, group_names, fi
 
     if verbose_level > 0:
         print(f"Exported {file_name}")
+
 #-------------------------------------------------------------------------------------------------------------
 
+def prepend_zero_column(data):
+    """
+    Prepends a zero column to the input data.
+
+    Parameters:
+        np.array
+            The input data.
+
+    Returns:
+        np.array
+            The input data with a zero column prepended.
+    """
+    return np.column_stack((np.zeros((data.shape[0], 1)), data))
+    
+#-------------------------------------------------------------------------------------------------------------
+def compute_global_energy_lorenz_curve_and_derivative(excel_input_data, cum_energy_in_country_to_pop_percentile, 
+                 per_capita_energy_in_country_to_pop_percentile, percentile_vector, filename_prefix, verbose_level):
+
+    """
+    Computes the global energy Lorenz curve and its derivative.
+
+    Parameters:
+        excel_input_data: pandas.DataFrame
+            Data containing country names, codes, and energy information.
+        filename_prefix: str
+            Name used in the output file names.
+        verbose_level: int
+            Level of verbosity for printing progress and results.
+
+    Returns:    
+        global_energy_lorenz_curve: list of floats
+            The cumulative energy use by population percentile.
+        global_energy_lorenz_derivative: list of floats
+            The derivative of the cumulative energy use by population percentile.
+    """
+    pop_scalar = np.sum(excel_input_data.iloc[:, 4] )
+    # make an array for each country in the group showing the population in each percentile bin
+    pop_countries_vector = excel_input_data.iloc[idx, 4] 
+    # calculate percentile bin widths, under the assumption that there is a tacit zero for the lower bound of the first bin
+    bin_widths = percentile_vector[1:] - percentile_vector[:-1]
+    # make an array for each country in the group showing the population in each percentile bin
+    pop_country_pct_array = pop_countries_vector[:, np.newaxis] * np.concatenate(([0],bin_widths))
+
+
+
+
+    # flatten the arrays
+    energy_in_bin_array = per_capita_energy_in_country_to_pop_percentile
+    per_capita_energy_vector = np.flatten(per_capita_energy_in_country_to_pop_percentile)
+    population vector
+
+    # now calculate the amount of energy use in each bin, by subtracting the cumulative energy use 
+    # at the lower bound of the bin from the cumulative energy use at the upper bound of the bin,
+    # assuming an implict zero for the lower bound of the first bin
+    # Assuming your 2D array is called 'array_2d'
+    energy_array = np.diff(cum_energy_array)
+    zeros_column = np.zeros((energy_array.shape[0], 1))  # Create a column of zeros with same number of rows
+    energy_array = np.column_stack((zeros_column, energy_array))    
+
+
+    
 
 #-------------------------------------------------------------------------------------------------------------
 
