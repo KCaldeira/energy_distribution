@@ -249,6 +249,8 @@ def prep_country_level_lorenz_data(excel_input_data, gamma):
     #   for spline_fn,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
 
     energy_integral_list = []
+    if verbose_level > 0:
+        print("computing energy integral list")
     for spline_fn, values in lorenz_interpolation_list_country:
         p_left, q_left, p_right, q_right, *rest = values  # Unpack properly
         energy_integral = compute_energy_integral(0, 1, x_data, spline_fn, p_left, q_left, p_right, q_right, gamma)
@@ -258,16 +260,22 @@ def prep_country_level_lorenz_data(excel_input_data, gamma):
         print("energy integral list: ", energy_integral_list)
          
     # Step 5: Compute income Gini list
+    if verbose_level > 0:
+        print("computing income gini list")
     income_gini_list = [
         1 - compute_income_lorenz_integral(0.0, 1.0, x_data, spline_fn, p_left, q_left, p_right, q_right) / 0.5
         for spline_fn,[ p_left, q_left, p_right, q_right,*rest] in lorenz_interpolation_list_country]
 
 
    # Step 6: Compute energy Gini list
+    if verbose_level > 0:
+        print("computing energy gini list")
     energy_gini_list = [
         1 - compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q_right, gamma, energy_integral_list[idx]) / 0.5
         for idx,( spline_fn,[ p_left, q_left, p_right, q_right,*rest]) in enumerate( lorenz_interpolation_list_country) ]
 
+    if verbose_level > 0:
+        print("creating country summary table")
 
     # Step 7: Create country summary table
     country_summary_data = {
@@ -459,6 +467,7 @@ def compute_energy_lorenz_integral(x_data, spline_fn, p_left, q_left, p_right, q
         total_integral : float 
             The numerical value of the integral of f(x)^gamma from 0 to 1.
     """
+    print("+")
     # Integrate the left analytic segment from 0 to x_data[1]:
     total_integral, _ = quad(lambda x:  compute_energy_integral(0,x,x_data, spline_fn, p_left, q_left, p_right, q_right, gamma),
                             0., 1.)
@@ -948,9 +957,7 @@ def find_country_groups_per_capita(excel_input_data, n_groups, idx_group):
     """
     # Step 1: Sort data by the chosen per capita metric
     excel_input_data["PerCapita"] = excel_input_data.iloc[:, idx_group] / excel_input_data.iloc[:, 4]  # Per capita value (e.g., income/pop)
-    print (excel_input_data["PerCapita"], excel_input_data.iloc[:, idx_group], excel_input_data.iloc[:, 4])
     sorted_data = excel_input_data.sort_values(by="PerCapita").reset_index(drop=True)
-    print (sorted_data)
 
     # Step 2: Calculate cumulative population, income, and energy
     cum_pop = sorted_data.iloc[:, 4].cumsum()
@@ -961,8 +968,6 @@ def find_country_groups_per_capita(excel_input_data, n_groups, idx_group):
 
     cum_energy = sorted_data.iloc[:, 6].cumsum()
     cum_energy /= cum_energy.iloc[-1]  # Normalize to [0, 1]
-
-    print (cum_pop, cum_income, cum_energy)
 
     # Step 3: Determine country positions corresponding to population groups
     pop_targets = np.linspace(1. / n_groups, 1, n_groups)
@@ -1719,17 +1724,17 @@ if __name__ == "__main__":
 
     #--------------------------------------------------------------------------
     # Key run time parameters
-    run_name = "test"  # Name of the run
+    run_name = "(2022) 2025-04-29"  # Name of the run
     n_percentile_levels = 10000  # 100 for testing, 10000 for production
     n_energy_levels = 1000 # 100 for test and summary output, 1000 for production
     n_bins_out = 1000 # number of bins for output
     verbose_level = 2
     dir = r"C:\Users\kcaldeira\github\energy_distribution"
-    #data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
+    data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx" 
-    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test5.xlsx" # only 5 countries, gamma = 0.5
+    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test5.xlsx" # only 5 countries, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test6.xlsx" # only 10 countries, 2x5, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
