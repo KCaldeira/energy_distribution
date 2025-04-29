@@ -168,7 +168,9 @@ def run_energy_dist(excel_input_data, gamma, n_percentile_levels, n_energy_level
     export_country_summary_data(key_variables["country_summary_data"], filename_prefix, verbose_level)
 
     # Export per capita and cumulative energy use by percentile for each country
-    export_countries_percentile(excel_input_data, percentile_vector, key_variables["per_capita_energy_in_country_to_pop_percentile"], key_variables["cum_energy_in_country_to_pop_percentile"], filename_prefix, verbose_level)
+    export_countries_percentile(excel_input_data, percentile_vector,
+                    key_variables["per_capita_energy_in_country_to_pop_percentile"], 
+                    key_variables["cum_energy_in_country_to_pop_percentile"], filename_prefix, verbose_level)
 
     # Identify country groups based on per capita income
     country_groups = find_country_groups_per_capita(excel_input_data, n_groups, idx_group)
@@ -819,7 +821,7 @@ def slope_estimate(x_data, y_data):
     f = interp1d(midpoints, slopes, fill_value="extrapolate")
     return f(x_data)        
 
- def slope_log_estimate(x_data, y_data):
+def slope_log_estimate(x_data, y_data):
     """
     Estimates the slope of a line through the data points (x_data, y_data).
     Sometimes we want the result to be in the form of how much y changes per percent increase in x
@@ -1133,23 +1135,52 @@ def compute_global_energy_lorenz_curve_and_derivative(excel_input_data, cum_ener
     # calculate percentile bin widths, under the assumption that there is a tacit zero for the lower bound of the first bin
     bin_widths = percentile_vector[1:] - percentile_vector[:-1]
     # make an array for each country in the group showing the population in each percentile bin
-    pop_country_pct_array = pop_countries_vector[:, np.newaxis] * np.concatenate(([0],bin_widths))
-
-
-
-
-    # flatten the arrays
-    energy_in_bin_array = per_capita_energy_in_country_to_pop_percentile
-    per_capita_energy_vector = np.flatten(per_capita_energy_in_country_to_pop_percentile)
-    population vector
+    pop_in_bin_array = pop_countries_vector[:, np.newaxis] * np.concatenate(([0],bin_widths))
 
     # now calculate the amount of energy use in each bin, by subtracting the cumulative energy use 
     # at the lower bound of the bin from the cumulative energy use at the upper bound of the bin,
     # assuming an implict zero for the lower bound of the first bin
     # Assuming your 2D array is called 'array_2d'
-    energy_array = np.diff(cum_energy_array)
-    zeros_column = np.zeros((energy_array.shape[0], 1))  # Create a column of zeros with same number of rows
-    energy_array = np.column_stack((zeros_column, energy_array))    
+    energy_in_bin_array = np.diff(cum_energy_in_country_to_pop_percentile, axis=1) 
+    zeros_column = np.zeros((energy_in_bin_array.shape[0], 1))  # Create a column of zeros with same number of rows
+    energy_in_bin_array = np.column_stack((zeros_column, energy_in_bin_array)) 
+
+
+    # flatten the arrays
+
+    per_capita_energy_vector = np.flatten(per_capita_energy_in_country_to_pop_percentile)
+    pop_in_bin_vector = np.flatten(pop_in_bin_array)
+    energy_in_bin_vector = np.flatten(energy_in_bin_array)
+   
+
+    # now sort the arrays by the per capita energy vector
+    sorted_idx = np.argsort(per_capita_energy_vector)
+    per_capita_energy_vector = per_capita_energy_vector[sorted_idx]
+    pop_in_bin_vector = pop_in_bin_vector[sorted_idx]
+    energy_in_bin_vector = energy_in_bin_vector[sorted_idx]
+
+    # now calculate the cumulative energy use by population percentile
+    cum_energy_in_bin_vector = np.cumsum(energy_in_bin_vector) 
+
+    # now calculate the cumulative population 
+    cum_pop_in_bin_vector = np.cumsum(pop_in_bin_vector) / pop_scalar
+
+    # now create an interpolation function for the cumulative energy use by population percentile, extrapolating at the end points
+    cum_energy_in_bin_interp = np.interp(percentile_vector, cum_pop_in_bin_vector, cum_energy_in_bin_vector)
+
+    # now create an interpolation function for the per capita energy use as a function of poulation percentile
+    per_capita_energy_in_bin_interp = np.interp(percentile_vector, cum_pop_in_bin_vector, per_capita_energy_vector)
+
+    # put out a csv file with the cumulative energy use by population percentile, the per capita energy use as a function of poulation percentile, and the population percentile
+    outarray = np.array([percentile_vector, cum_energy_in_bin_interp, per_capita_energy_in_bin_interp])
+    outfile = f"./{filename_prefix}/{filename_prefix}_global_energy_lorenz_curve_and_derivative.csv"
+    np.savetxt(outfile, outarray, delimiter=',')
+
+    return cum_energy_in_bin_interp, per_capita_energy_in_bin_interp
+
+
+
+
 
 
     
@@ -1195,8 +1226,11 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     group_cum_pop_percap_energy_interp = []
     group_cum_energy_percap_energy_interp = []
 
+    pop_scalar = np.sum(excel_input_data.iloc[:, 4])
+
     # Loop over each group to make the logic clear
     for group_idx, group in enumerate(groups):
+        print(group_idx, group)
         # calculate the total population in the group
         pop_group_scalar = np.sum([excel_input_data.iloc[idx, 4] for idx in group])
         # make an array for each country in the group showing the population in each percentile bin
@@ -1236,6 +1270,9 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
         # now create a table with the population and per capita energy use by percentile by creating an interpolation function
         # and then interpolating to the percentile list
 
+        print(pop_bin)  # this is the population in each bin
+        print(pc_energy_vector) # this is the per capita energy use in each bin
+        print(percentile_vector) # this is the population percentile
         pc_energy_pct_interp = np.interp(percentile_vector, pop_bin, pc_energy_vector)
         cum_energy_pct_interp = np.interp(percentile_vector, pop_bin, cum_energy_by_group)    
 
@@ -1273,50 +1310,50 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
     # ++++ If this next table is to make sense then the "Population Percentile" should be the population global percentile, sorted by income
     # ++++ I don't think this is the case right now.
     # For per capita energy data by percentile of population
-    pc_df = pd.DataFrame(out_group_percap_energy_pct)
+    df = pd.DataFrame(out_group_percap_energy_pct)
 
-    pc_df_transposed = pc_df.transpose()
+    df_transposed = df.transpose()
     # Reset the index to make the first row a column
-    pc_df_transposed.reset_index(inplace=True)
-    pc_df_transposed.columns = ['GlobalPopulation Percentile'] + list(pc_df_transposed.columns[1:])
-    pc_df_transposed.to_excel(out_percap_energy_file, index=False)
+    df_transposed.reset_index(inplace=True)
+    df_transposed.columns = ['GlobalPopulation Percentile'] + list(df_transposed.columns[1:])
+    df_transposed.to_excel(out_percap_energy_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_percap_energy_file}")
 
     # ++++ This next table is for making a Lorenz curve of cumulative energy use by population percentile
     # For cumulative energy data by percentile of population
-    ce_df = pd.DataFrame(out_group_cum_energy_pct)
+    df = pd.DataFrame(out_group_cum_energy_pct)
 
-    ce_df_transposed = ce_df.transpose()
+    df_transposed = df.transpose()
     # Reset the index to make the first row a column
-    ce_df_transposed.reset_index(inplace=True)
-    ce_df_transposed.columns = ['Global Population Percentile'] + list(ce_df_transposed.columns[1:])
-    ce_df_transposed.to_excel(out_cum_energy_file, index=False)
+    df_transposed.reset_index(inplace=True)
+    df_transposed.columns = ['Global Population Percentile'] + list(df_transposed.columns[1:])
+    df_transposed.to_excel(out_cum_energy_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_energy_file}")
 
     
     # ++++ This next table is for making a figure showing the cumulative population by per capita energy use
     # For number data by per capita energy use
-    pc_df = pd.DataFrame(out_group_cum_pop_level)
+    df = pd.DataFrame(out_group_cum_pop_level)
 
-    pc_df_transposed = pc_df.transpose()
+    df_transposed = df.transpose()
     # Reset the index to make the first row a column
-    pc_df_transposed.reset_index(inplace=True)
-    pc_df_transposed.columns = ['Energy Level'] + list(pc_df_transposed.columns[1:])
-    pc_df_transposed.to_excel(out_cum_pop_level_file, index=False)
+    df_transposed.reset_index(inplace=True)
+    df_transposed.columns = ['Energy Level'] + list(df_transposed.columns[1:])
+    df_transposed.to_excel(out_cum_pop_level_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_pop_level_file}")
 
     # ++++ This next table is for making a figure showing the cumulative energy use by per capita energy use
     # For cumulative energy data by per capita energy use
-    ce_df = pd.DataFrame(out_group_cum_energy_level)
+    df = pd.DataFrame(out_group_cum_energy_level)
 
-    ce_df_transposed = ce_df.transpose()
+    df_transposed = df.transpose()
     # Reset the index to make the first row a column
-    ce_df_transposed.reset_index(inplace=True)
-    ce_df_transposed.columns = ['Energy Level'] + list(ce_df_transposed.columns[1:])
-    ce_df_transposed.to_excel(out_cum_energy_level_file, index=False)
+    df_transposed.reset_index(inplace=True)
+    df_transposed.columns = ['Energy Level'] + list(df_transposed.columns[1:])
+    df_transposed.to_excel(out_cum_energy_level_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_energy_level_file}")
 
@@ -1348,12 +1385,12 @@ def export_countries_percentile(excel_input_data, percentile_vector,
     """
     # Step 1: Prepare per capita energy use data
     country_info = excel_input_data.iloc[:, [1, 2]].values  # Extract country names and codes
-    out_pc = [["per capita energy use by percentile", "kW"] + percentile_vector.tolist()] + \
+    out_pc = [["per capita energy use (kW) by percentile"] + percentile_vector.tolist()] + \
              [list(country_info[idx]) + per_capita_energy_in_country_to_pop_percentile[idx].tolist()
               for idx in range(len(per_capita_energy_in_country_to_pop_percentile))]
 
     # Step 2: Prepare cumulative energy use data
-    out_ce = [["cumulative energy use by percentile", "kW"] + percentile_vector.tolist()] + \
+    out_ce = [["cumulative energy use (kWh) by percentile"] + percentile_vector.tolist()] + \
              [list(country_info[idx]) + cum_energy_in_country_to_pop_percentile[idx].tolist()
               for idx in range(len(cum_energy_in_country_to_pop_percentile))]
 
@@ -1362,42 +1399,42 @@ def export_countries_percentile(excel_input_data, percentile_vector,
     out_cum_energy_file = f"./{filename_prefix}/{filename_prefix}_country_popPct_cumEnergy.xlsx"
     
     # For per capita energy data
-    pc_df = pd.DataFrame(out_pc)
+    df = pd.DataFrame(out_pc)
     # Use the first row as column headers
-    pc_df.columns = pc_df.iloc[0]
+    df.columns = df.iloc[0]
     # Remove the first row since it's now the header
-    pc_df = pc_df.iloc[1:]
+    df = df.iloc[1:]
     # Drop the first column
-    pc_df = pc_df.iloc[:, 1:]
+    df = df.iloc[:, 1:]
     # Transpose the DataFrame
-    pc_df_transposed = pc_df.transpose()
+    df_transposed = df.transpose()
     # Reset the index to make the first row a column
-    pc_df_transposed.reset_index(inplace=True)
+    df_transposed.reset_index(inplace=True)
     # Use the first row as column headers
-    pc_df_transposed.columns = pc_df_transposed.iloc[0]
+    df_transposed.columns = df_transposed.iloc[0]
     # Remove the first row since it's now the header
-    pc_df_transposed = pc_df_transposed.iloc[1:]
-    pc_df_transposed.to_excel(out_percap_energy_file, index=False)
+    df_transposed = df_transposed.iloc[1:]
+    df_transposed.to_excel(out_percap_energy_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_percap_energy_file}")
 
     # For cumulative energy data
-    ce_df = pd.DataFrame(out_ce)
+    df = pd.DataFrame(out_ce)
     # Use the first row as column headers
-    ce_df.columns = ce_df.iloc[0]
+    df.columns = df.iloc[0]
     # Remove the first row since it's now the header
-    ce_df = ce_df.iloc[1:]
+    df = df.iloc[1:]
     # Drop the first column
-    ce_df = ce_df.iloc[:, 1:]
+    df = df.iloc[:, 1:]
     # Transpose the DataFrame
-    ce_df_transposed = ce_df.transpose()
+    df_transposed = df.transpose()
     # Reset the index to make the first row a column
-    ce_df_transposed.reset_index(inplace=True)
+    df_transposed.reset_index(inplace=True)
     # Use the first row as column headers
-    ce_df_transposed.columns = ce_df_transposed.iloc[0]
+    df_transposed.columns = df_transposed.iloc[0]
     # Remove the first row since it's now the header
-    ce_df_transposed = ce_df_transposed.iloc[1:]
-    ce_df_transposed.to_excel(out_cum_energy_file, index=False)
+    df_transposed = df_transposed.iloc[1:]
+    df_transposed.to_excel(out_cum_energy_file, index=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_energy_file}")
 
@@ -1692,7 +1729,7 @@ if __name__ == "__main__":
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx" 
-    #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test4.xlsx" # only 5 countries, gamma = 0.5
+    data_input_file_name = "Energy Distribution Input 2025-03-04 - Test5.xlsx" # only 5 countries, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test6.xlsx" # only 10 countries, 2x5, gamma = 0.5
     #data_input_file_name = "Energy Distribution Input (2021) 2025-02-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (2020) 2025-02-05.xlsx"
@@ -1700,7 +1737,7 @@ if __name__ == "__main__":
     #data_input_file_name = "Energy Distribution Input (2018) 2025-02-05.xlsx"
     #data_input_file_name = "Data-input_Dioha-et-al_2022-08-05.xlsx"
     #data_input_file_name = "Energy Distribution Input (for Ken) 2025-01-24.xlsx"
-    data_input_file_name = "Energy Distribution Input (for Ken) 2025-01-24 18-test.xlsx"
+    #data_input_file_name = "Energy Distribution Input (for Ken) 2025-01-24 18-test.xlsx"
     epsilon = 1e-12  # Approximately one-hundredth of a person for 10^10 people
     date_stamp = datetime.now().replace(second=0, microsecond=0).isoformat().replace(':', '-').replace('T', '_')[:-3]
    #--------------------------------------------------------------------------
