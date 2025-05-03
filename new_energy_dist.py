@@ -180,7 +180,7 @@ def run_energy_dist(excel_input_data, gamma, n_percentile_levels, n_energy_level
     export_country_group_table(excel_input_data, country_groups, group_names, filename_prefix, verbose_level)
 
     # Export per capita and cumulative energy use by percentile and energy level for each group
-    compute_percap_energy_and_cum_energy_for_groups(group_indices, group_names, "energy", excel_input_data, 
+    compute_percap_energy_and_cum_energy_for_groups(group_indices, group_names, excel_input_data, 
                     percentile_vector,energy_level_vector,
                     key_variables["per_capita_energy_in_country_to_pop_percentile"], 
                     key_variables["cum_energy_in_country_to_pop_percentile"], 
@@ -1192,7 +1192,7 @@ def compute_global_energy_lorenz_curve_and_derivative(excel_input_data, cum_ener
 
 #-------------------------------------------------------------------------------------------------------------
 
-def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_type, excel_input_data, 
+def compute_percap_energy_and_cum_energy_for_groups(groups, group_names,  excel_input_data, 
                       percentile_vector, energy_level_vector, per_capita_energy_in_country_to_pop_percentile, 
                       cum_energy_in_country_to_pop_percentile, filename_prefix, verbose_level):
     """
@@ -1208,8 +1208,6 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
             Indices of countries in each group.
         group_names: list
             Names of the groups.
-        group_type: str
-            Type of the group, used in file names.
         excel_input_data: pandas.DataFrame
             Data containing population and energy information for countries.
         percentile_vector: list
@@ -1255,7 +1253,7 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
         # at the lower bound of the bin from the cumulative energy use at the upper bound of the bin,
         # assuming an implict zero for the lower bound of the first bin
         # Assuming your 2D array is called 'array_2d'
-        energy_array = np.diff(cum_energy_array)
+        energy_array = np.diff(cum_energy_array,axis=1) # Do the diff for energy levels not countries
         zeros_column = np.zeros((energy_array.shape[0], 1))  # Create a column of zeros with same number of rows
         energy_array = np.column_stack((zeros_column, energy_array))    
 
@@ -1306,59 +1304,64 @@ def compute_percap_energy_and_cum_energy_for_groups(groups, group_names, group_t
                    [[group_names[idx]] + (group_cum_energy_percap_energy_interp[idx]).tolist() for idx in range(len(groups))]
 
     # Step 5: Export to Excel with column labels and transposed data
-    out_percap_energy_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_pop_{group_type}.xlsx"
-    out_cum_energy_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
-    out_cum_pop_level_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_pop_{group_type}.xlsx"
-    out_cum_energy_level_file = f"./{filename_prefix}/{filename_prefix}_group_popPct_cumEnergy_{group_type}.xlsx"
+ 
 
     
     # ++++ If this next table is to make sense then the "Population Percentile" should be the population global percentile, sorted by income
     # ++++ I don't think this is the case right now.
     # For per capita energy data by percentile of population
+    out_percap_energy_file = f"./{filename_prefix}/{filename_prefix}_group_percap_energy.xlsx"
+
     df = pd.DataFrame(out_group_percap_energy_pct)
 
     df_transposed = df.transpose()
     # Reset the index to make the first row a column
     df_transposed.reset_index(inplace=True)
     df_transposed.columns = ['GlobalPopulation Percentile'] + list(df_transposed.columns[1:])
-    df_transposed.to_excel(out_percap_energy_file, index=False)
+    df_transposed.to_excel(out_percap_energy_file, index=False, header=False)
     if verbose_level > 0:
         print(f"Exported {out_percap_energy_file}")
 
     # ++++ This next table is for making a Lorenz curve of cumulative energy use by population percentile
     # For cumulative energy data by percentile of population
+    out_cum_energy_file = f"./{filename_prefix}/{filename_prefix}_group_cum_energy.xlsx"
+
     df = pd.DataFrame(out_group_cum_energy_pct)
 
     df_transposed = df.transpose()
     # Reset the index to make the first row a column
     df_transposed.reset_index(inplace=True)
     df_transposed.columns = ['Global Population Percentile'] + list(df_transposed.columns[1:])
-    df_transposed.to_excel(out_cum_energy_file, index=False)
+    df_transposed.to_excel(out_cum_energy_file, index=False, header=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_energy_file}")
 
     
     # ++++ This next table is for making a figure showing the cumulative population by per capita energy use
     # For number data by per capita energy use
+    out_cum_pop_level_file = f"./{filename_prefix}/{filename_prefix}_group_cum_pop_level.xlsx"
+
     df = pd.DataFrame(out_group_cum_pop_level)
 
     df_transposed = df.transpose()
     # Reset the index to make the first row a column
     df_transposed.reset_index(inplace=True)
     df_transposed.columns = ['Energy Level'] + list(df_transposed.columns[1:])
-    df_transposed.to_excel(out_cum_pop_level_file, index=False)
+    df_transposed.to_excel(out_cum_pop_level_file, index=False, header=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_pop_level_file}")
 
     # ++++ This next table is for making a figure showing the cumulative energy use by per capita energy use
     # For cumulative energy data by per capita energy use
+    out_cum_energy_level_file = f"./{filename_prefix}/{filename_prefix}_group_cum_energy_level.xlsx"
+    
     df = pd.DataFrame(out_group_cum_energy_level)
 
     df_transposed = df.transpose()
     # Reset the index to make the first row a column
     df_transposed.reset_index(inplace=True)
     df_transposed.columns = ['Energy Level'] + list(df_transposed.columns[1:])
-    df_transposed.to_excel(out_cum_energy_level_file, index=False)
+    df_transposed.to_excel(out_cum_energy_level_file, index=False, header=False)
     if verbose_level > 0:
         print(f"Exported {out_cum_energy_level_file}")
 
@@ -1731,6 +1734,7 @@ if __name__ == "__main__":
     verbose_level = 2
     dir = r"C:\Users\kcaldeira\github\energy_distribution"
     data_input_file_name = "Energy Distribution Input (2022) 2025-02-05.xlsx"
+    data_input_file_name = "Energy Distribution Input (2022) 2025-02-05 Test7.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test2.xlsx"
     #data_input_file_name = "Energy Distribution Input 2025-03-04 - Test3.xlsx" 
